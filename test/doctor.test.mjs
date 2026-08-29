@@ -71,9 +71,13 @@ test('extractStaticRequires ignores Node built-ins and member methods', () => {
 
 test('a healthy profile passes the MVP checks', () => {
   const subject = fixture()
+  json(join(subject.harness, 'packages', 'agent', 'agent', 'package.json'), {
+    name: '@deepseek-ai/dsh-agent', version: '1.0.0',
+  })
   plugin(subject, {
     name: 'fixture-plugin',
     version: '1.0.0',
+    peerDependencies: { '@deepseek-ai/dsh-agent': '^1.0.0' },
     exports: { './client': './lib/client.js' },
     dsh: {
       bundle: { patch: './cordis.patch.yml' },
@@ -83,6 +87,59 @@ test('a healthy profile passes the MVP checks', () => {
 
   const report = diagnose({ home: subject.home, profile: 'web', harnessRoot: subject.harness })
   assert.deepEqual(report.summary, { errors: 0, warnings: 0, info: 0 })
+  assert.equal(report.context.packages[0].compatibility, 'compatible')
+  assert.deepEqual(report.context.compatibility, {
+    incompatible: 0, risk: 0, unknown: 0, compatible: 1,
+  })
+})
+
+test('classifies an undeclared plugin compatibility contract as unknown without a false warning', () => {
+  const subject = fixture()
+  plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0',
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+
+  const report = diagnose({ home: subject.home, profile: 'web', harnessRoot: subject.harness })
+  assert.deepEqual(report.summary, { errors: 0, warnings: 0, info: 0 })
+  assert.equal(report.context.packages[0].compatibility, 'unknown')
+  assert.equal(report.context.compatibility.unknown, 1)
+  assert.match(formatReport(report, { language: 'zh' }), /插件兼容性: 0 个不兼容，0 个风险，1 个未知，0 个兼容/)
+})
+
+test('attributes bundle patch failures and warnings to plugin compatibility', () => {
+  const subject = fixture()
+  json(join(subject.harness, 'packages', 'agent', 'agent', 'package.json'), {
+    name: '@deepseek-ai/dsh-agent', version: '1.0.0',
+  })
+  const directory = plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0',
+    peerDependencies: { '@deepseek-ai/dsh-agent': '^1.0.0' },
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+
+  text(join(directory, 'cordis.patch.yml'), '- id: 42\n  disabled: true\n')
+  let report = diagnose({ home: subject.home, profile: 'web', harnessRoot: subject.harness })
+  assert.equal(report.findings.find(item => item.code === 'INVALID_PATCH_ID')?.package, 'fixture-plugin')
+  assert.equal(report.context.packages[0].compatibility, 'incompatible')
+
+  text(join(directory, 'cordis.patch.yml'), '- id: missing\n  disabled: true\n')
+  report = diagnose({ home: subject.home, profile: 'web', harnessRoot: subject.harness })
+  assert.equal(report.findings.find(item => item.code === 'PATCH_TARGET_NOT_FOUND')?.package, 'fixture-plugin')
+  assert.equal(report.context.packages[0].compatibility, 'risk')
+})
+
+test('attributes an invalid plugin dependency map to that plugin', () => {
+  const subject = fixture()
+  plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0',
+    peerDependencies: [],
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+
+  const report = diagnose({ home: subject.home, profile: 'web', harnessRoot: subject.harness })
+  assert.equal(report.findings.find(item => item.code === 'INVALID_DEPENDENCY_MAP')?.package, 'fixture-plugin')
+  assert.equal(report.context.packages[0].compatibility, 'incompatible')
 })
 
 test('detects an undeclared legacy client require and removed inject target', () => {
@@ -109,6 +166,7 @@ test('detects an undeclared legacy client require and removed inject target', ()
     'LEGACY_HARNESS_PEERS',
     'PROFILE_DEPENDENCY_VERSION_MISMATCH',
   ])
+  assert.equal(report.context.packages[0].compatibility, 'incompatible')
   assert.match(formatReport(report), /Harness may fail to start/)
   assert.equal(report.context.dshCli.available, true)
   const output = formatReport(report)
@@ -119,6 +177,35 @@ test('detects an undeclared legacy client require and removed inject target', ()
   assert.equal(update.command[1], join(subject.harness, 'apps', 'cli', 'lib', 'bin.js'))
   assert.deepEqual(update.command.slice(2), ['plugin', '--profile', 'web', 'update', 'fixture-plugin'])
   assert.deepEqual(update.env, { DSH_HOME: subject.home })
+})
+
+test('checks removed Harness peers and dependencies for bundle-only plugins after a DSH upgrade', () => {
+  const subject = fixture()
+  json(join(subject.profile, 'package.json'), {
+    dependencies: { 'peer-plugin': '1.0.0', 'dependency-plugin': '1.0.0' },
+    dsh: { profile: { bundles: ['peer-plugin', 'dependency-plugin'] } },
+  })
+  plugin(subject, {
+    name: 'peer-plugin', version: '1.0.0',
+    peerDependencies: { '@deepseek-ai/dsh-retired-peer': '^1.0.0' },
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  plugin(subject, {
+    name: 'dependency-plugin', version: '1.0.0',
+    dependencies: { '@deepseek-ai/dsh-retired-runtime': '^1.0.0' },
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+
+  const report = diagnose({ home: subject.home, profile: 'web', harnessRoot: subject.harness })
+  assert.deepEqual(report.findings.map(item => item.code), [
+    'LEGACY_HARNESS_DEPENDENCIES',
+    'LEGACY_HARNESS_PEERS',
+  ])
+  assert.deepEqual(report.context.packages.map(item => [item.name, item.compatibility]), [
+    ['peer-plugin', 'risk'],
+    ['dependency-plugin', 'risk'],
+  ])
+  assert.equal(report.context.compatibility.risk, 2)
 })
 
 test('an external cannot be supplied by a stale profile fallback package', () => {
@@ -163,6 +250,11 @@ test('detects missing dependencies and bundle patches', () => {
     'BUNDLE_PATCH_MISSING',
     'DEPENDENCY_NOT_INSTALLED',
   ])
+  assert.deepEqual(report.context.packages.map(item => [item.name, item.installed, item.compatibility]), [
+    ['missing', false, 'incompatible'],
+    ['broken', true, 'incompatible'],
+  ])
+  assert.equal(report.context.compatibility.incompatible, 2)
 })
 
 test('rejects non-object profile manifests without throwing', () => {
@@ -229,6 +321,18 @@ test('parses profile, home, bundle, settings, and credential documents', () => {
     'INVALID_SETTINGS_ROOT',
   ])
   assert.doesNotMatch(JSON.stringify(report), /hidden/)
+})
+
+test('uses the same JSON plus !!js YAML dialect as Harness patches', () => {
+  const subject = fixture()
+  const directory = plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0',
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  text(join(directory, 'cordis.patch.yml'), '- insert:\n    - id: expression-row\n      config: !!js ""\n')
+
+  const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
+  assert.deepEqual(report.findings, [])
 })
 
 test('uses the Harness installation before a profile-local bundle with the same name', () => {
@@ -366,6 +470,24 @@ test('passes command repair arguments literally without a shell', () => {
   })
 })
 
+test('captures command failures without leaking subprocess output to stdout', () => {
+  const action = {
+    id: 'command-failure', kind: 'command', risk: 'medium', description: 'failure check',
+    command: [process.execPath, '-e', 'process.stdout.write("out"); process.stderr.write("failure detail"); process.exit(3)'],
+  }
+  const originalWrite = process.stdout.write
+  let leaked = ''
+  process.stdout.write = value => { leaked += String(value); return true }
+  try {
+    const results = applyRepairs([action], { captureOutput: true })
+    assert.equal(results[0].status, 'failed')
+    assert.match(results[0].error, /status 3: failure detail/)
+    assert.equal(leaked, '')
+  } finally {
+    process.stdout.write = originalWrite
+  }
+})
+
 test('formats the same report in Chinese without changing stable finding codes', () => {
   const subject = fixture()
   json(join(subject.harness, 'packages', 'agent', 'agent', 'package.json'), {
@@ -382,6 +504,126 @@ test('formats the same report in Chinese without changing stable finding codes',
   assert.match(output, /声明的 Harness peer 版本范围不接受当前已安装版本/)
   assert.match(output, /汇总：/)
   assert.equal(report.findings.some(item => item.code === 'HARNESS_PEER_VERSION_MISMATCH'), true)
+})
+
+test('validates direct dependency ranges, Harness peer ranges, and plugin Node engines', () => {
+  const subject = fixture()
+  json(join(subject.harness, 'packages', 'agent', 'agent', 'package.json'), {
+    name: '@deepseek-ai/dsh-agent', version: '1.0.0',
+  })
+  json(join(subject.profile, 'package.json'), {
+    dependencies: { 'fixture-plugin': '^not-a-version' },
+    dsh: { profile: { bundles: ['fixture-plugin'] } },
+  })
+  plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0',
+    engines: { node: '<1' },
+    peerDependencies: { '@deepseek-ai/dsh-agent': '^not-a-version' },
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  json(join(subject.harness, 'apps', 'cli', 'package.json'), {
+    name: '@deepseek-ai/dsh', version: '1.0.0', bin: { dsh: 'lib/bin.js' },
+  })
+  text(join(subject.harness, 'apps', 'cli', 'lib', 'bin.js'), '#!/usr/bin/env node\n')
+
+  const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
+  assert.deepEqual(report.findings.map(item => item.code), [
+    'INVALID_PROFILE_DEPENDENCY_RANGE',
+    'INVALID_HARNESS_PEER_RANGE',
+    'PLUGIN_NODE_VERSION_MISMATCH',
+  ])
+})
+
+test('cross-checks the profile manifest, pnpm lockfile, and installed versions', () => {
+  const subject = fixture()
+  plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  text(join(subject.profile, 'pnpm-lock.yaml'), `lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      fixture-plugin:\n        specifier: ^2.0.0\n        version: 2.0.0\n      stale-plugin:\n        specifier: 1.0.0\n        version: 1.0.0\n`)
+
+  const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
+  assert.deepEqual(report.findings.map(item => item.code), [
+    'LOCKFILE_DEPENDENCY_STALE',
+    'LOCKFILE_INSTALLED_VERSION_MISMATCH',
+    'LOCKFILE_SPECIFIER_MISMATCH',
+  ])
+  assert.deepEqual(report.context.lockfile, {
+    file: join(subject.profile, 'pnpm-lock.yaml'), present: true, valid: true,
+  })
+})
+
+test('accepts a lockfile without a dependencies map when the profile declares none', () => {
+  const subject = fixture()
+  json(join(subject.profile, 'package.json'), {
+    name: 'dsh-profile-web', private: true, dependencies: {},
+    dsh: { profile: { bundles: [] } },
+  })
+  text(join(subject.profile, 'pnpm-lock.yaml'), `lockfileVersion: '9.0'\nimporters:\n  .:\n    devDependencies:\n      fixture-dev:\n        specifier: 1.0.0\n        version: 1.0.0\n`)
+
+  const report = diagnose({ home: subject.home, profile: 'web', harnessRoot: subject.harness })
+  assert.deepEqual(report.findings, [])
+  assert.deepEqual(report.context.lockfile, {
+    file: join(subject.profile, 'pnpm-lock.yaml'), present: true, valid: true,
+  })
+})
+
+test('reports DSH runtime version drift and stale profile-local Harness packages', () => {
+  const subject = fixture()
+  plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  json(join(subject.harness, 'apps', 'cli', 'package.json'), {
+    name: '@deepseek-ai/dsh', version: '2.0.0', bin: { dsh: 'lib/bin.js' },
+  })
+  text(join(subject.harness, 'apps', 'cli', 'lib', 'bin.js'), '#!/usr/bin/env node\n')
+  json(join(subject.profile, 'node_modules', '@deepseek-ai', 'dsh-retired', 'package.json'), {
+    name: '@deepseek-ai/dsh-retired', version: '0.1.0',
+  })
+  json(join(subject.harness, 'packages', 'agent', 'agent', 'package.json'), {
+    name: '@deepseek-ai/dsh-agent', version: '2.0.0',
+  })
+  json(join(subject.profile, 'node_modules', '@deepseek-ai', 'dsh-agent', 'package.json'), {
+    name: '@deepseek-ai/dsh-agent', version: '0.5.0',
+  })
+  json(join(subject.home, 'profiles', 'node_modules', '@deepseek-ai', 'dsh-agent', 'package.json'), {
+    name: '@deepseek-ai/dsh-agent', version: '1.0.0',
+  })
+
+  const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
+  assert.deepEqual(report.findings.map(item => item.code), [
+    'DSH_CLI_HARNESS_VERSION_MISMATCH',
+    'DUPLICATE_HARNESS_PACKAGE_VERSION',
+    'STALE_PROFILE_HARNESS_PACKAGE',
+  ])
+})
+
+test('reports a malformed profile-local package scope without throwing', () => {
+  const subject = fixture()
+  plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  text(join(subject.profile, 'node_modules', '@deepseek-ai'), 'not a directory\n')
+
+  const report = diagnose({ home: subject.home, profile: 'web', harnessRoot: subject.harness })
+  assert.deepEqual(report.findings.map(item => item.code), ['PROFILE_HARNESS_SCOPE_UNREADABLE'])
+  assert.equal(report.summary.warnings, 1)
+})
+
+test('composes patch layers without loading plugins and reports Harness patch warnings', () => {
+  const subject = fixture()
+  const directory = plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  text(join(directory, 'cordis.patch.yml'), `- insert:\n    - id: ordinary\n      name: plugin-a\n    - id: group\n      name: group-plugin\n      group: true\n      config: []\n`)
+  text(join(subject.profile, 'cordis.patch.yml'), `- id: missing\n  config: {}\n- id: ordinary\n  insert: []\n- id: ordinary\n  name: plugin-b\n  config: {}\n- disabled: true\n`)
+
+  const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
+  assert.deepEqual(report.findings.map(item => item.code), [
+    'PATCH_ID_REQUIRED',
+    'PATCH_NAME_MISMATCH',
+    'PATCH_TARGET_NOT_FOUND',
+    'PATCH_TARGET_NOT_GROUP',
+  ])
 })
 
 test('resolves PATH, profile-linked, and explicit DSH CLI installations', () => {

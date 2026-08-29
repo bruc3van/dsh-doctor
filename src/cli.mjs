@@ -118,7 +118,7 @@ async function main() {
           confirmed = /^(?:y(?:es)?|是|确认)$/i.test(answer.trim())
         }
         if (confirmed) {
-          repairs = applyRepairs(actions)
+          repairs = applyRepairs(actions, { captureOutput: options.json })
           if (repairs.every(item => item.status === 'applied')) report = diagnose(options)
         }
       }

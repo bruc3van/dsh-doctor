@@ -1,6 +1,6 @@
 {
   "name": "@bruc3van/dsh-doctor",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Diagnostics and confirmed recovery for DeepSeek Harness profiles and third-party plugins",
   "license": "MIT",
   "type": "module",
@@ -18,6 +18,7 @@
   "files": [
     "src",
     "README.md",
+    "README.en.md",
     "LICENSE"
   ],
   "scripts": {

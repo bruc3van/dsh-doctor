@@ -22,10 +22,11 @@ const BUILTIN_MODULES = new Set(builtinModules.map(name => name.replace(/^node:/
 const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 }
 const JS_EXPRESSION = new yaml.Type('tag:yaml.org,2002:js', {
   kind: 'scalar',
-  resolve: value => typeof value === 'string' && value.trim().length > 0,
-  construct: value => value,
+  resolve: value => typeof value === 'string',
+  construct: value => ({ __jsExpr: value }),
 })
-const PATCH_SCHEMA = yaml.DEFAULT_SCHEMA.extend([JS_EXPRESSION])
+// Keep this dialect aligned with Harness entryListSchema: JSON values plus !!js.
+const PATCH_SCHEMA = yaml.JSON_SCHEMA.extend([JS_EXPRESSION])
 
 function objectRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : undefined
@@ -351,11 +352,12 @@ function clientExport(manifest) {
   return undefined
 }
 
-function dependencyEntries(value, field, file, findings) {
+function dependencyEntries(value, field, file, findings, packageName) {
   if (value === undefined) return []
   const record = objectRecord(value)
   if (record === undefined || Object.values(record).some(item => typeof item !== 'string')) {
     findings.push(finding('error', 'INVALID_DEPENDENCY_MAP', `${field} must be an object of package names to string ranges.`, {
+      package: packageName,
       evidence: file,
       suggestion: `Repair ${field} before managing or starting this profile.`,
     }))
@@ -576,16 +578,6 @@ function inspectClientPackage(record, context) {
       }
     }
 
-    const legacyPeers = Object.keys(record.manifest.peerDependencies ?? {})
-      .filter(peer => peer.startsWith('@deepseek-ai/dsh-') && !harnessPackages.has(peer))
-      .sort()
-    if (legacyPeers.length > 0) {
-      findings.push(finding('warning', 'LEGACY_HARNESS_PEERS', `${name} still declares Harness packages that no longer exist in the active source tree.`, {
-        package: name,
-        evidence: legacyPeers.join(', '),
-        suggestion: 'Treat this plugin as compatibility-risky and update it before the next Harness upgrade.',
-      }))
-    }
   }
 }
 
@@ -595,7 +587,7 @@ function inspectBundle(name, record, findings) {
       package: name,
       suggestion: 'Install the profile dependencies with the active DSH installation, upgrade the bundle, or remove it from the profile.',
     }))
-    return
+    return undefined
   }
   const patch = record.manifest?.dsh?.bundle?.patch
   if (typeof patch !== 'string' || patch.length === 0) {
@@ -604,7 +596,7 @@ function inspectBundle(name, record, findings) {
       evidence: record.file,
       suggestion: 'Upgrade or remove this bundle from dsh.profile.bundles.',
     }))
-    return
+    return undefined
   }
   const file = safePackageFile(record.directory, patch)
   if (file === undefined || !regularFile(file)) {
@@ -613,25 +605,135 @@ function inspectBundle(name, record, findings) {
       evidence: file ?? `${record.file}: dsh.bundle.patch = ${JSON.stringify(patch)}`,
       suggestion: 'Reinstall or upgrade this bundle, or remove it from the profile.',
     }))
-  } else inspectPatchFile(file, `${name} bundle patch`, findings)
+    return undefined
+  }
+  const patches = inspectPatchFile(file, `${name} bundle patch`, findings, name)
+  return patches === undefined ? undefined : { label: name, file, patches, package: name }
 }
 
-function inspectPatchFile(file, subject, findings) {
+function inspectPatchFile(file, subject, findings, packageName) {
   let parsed
   try {
     parsed = yaml.load(readFileSync(file, 'utf8'), { schema: PATCH_SCHEMA })
   } catch (error) {
     findings.push(finding('error', 'INVALID_PATCH_YAML', `${subject} cannot be parsed.`, {
+      package: packageName,
       evidence: `${file}: ${error instanceof Error ? error.message : String(error)}`,
       suggestion: 'Repair the YAML syntax before starting this profile.',
     }))
-    return
+    return undefined
   }
   if (!Array.isArray(parsed) || parsed.some(item => objectRecord(item) === undefined)) {
     findings.push(finding('error', 'INVALID_PATCH_LIST', `${subject} must be a top-level YAML array of mappings.`, {
+      package: packageName,
       evidence: file,
       suggestion: 'Repair the patch structure before starting this profile.',
     }))
+    return undefined
+  }
+  let valid = true
+  parsed.forEach((patch, index) => {
+    if (patch.id !== undefined && typeof patch.id !== 'string') {
+      valid = false
+      findings.push(finding('error', 'INVALID_PATCH_ID', `${subject} entry ${String(index + 1)} has a non-string id.`, {
+        package: packageName,
+        evidence: file,
+        suggestion: 'Use a string row id or omit id for a root insert patch.',
+      }))
+    }
+    if (patch.name !== undefined && typeof patch.name !== 'string') {
+      valid = false
+      findings.push(finding('error', 'INVALID_PATCH_NAME', `${subject} entry ${String(index + 1)} has a non-string name assertion.`, {
+        package: packageName,
+        evidence: file,
+        suggestion: 'Use a string plugin name assertion or omit the name field.',
+      }))
+    }
+    if (patch.insert !== undefined
+      && (!Array.isArray(patch.insert) || patch.insert.some(item => objectRecord(item) === undefined))) {
+      valid = false
+      findings.push(finding('error', 'INVALID_PATCH_INSERT', `${subject} entry ${String(index + 1)} insert must be an array of mappings.`, {
+        package: packageName,
+        evidence: file,
+        suggestion: 'Repair the insert list before starting this profile.',
+      }))
+    }
+  })
+  return valid ? parsed : undefined
+}
+
+// Mirrors the current Harness applyEntryPatches control flow without importing
+// code from (or executing code inside) the installation being diagnosed.
+function inspectPatchComposition(layers, findings) {
+  const entryMap = new Map()
+  const indexEntries = (values) => {
+    for (const entry of values) {
+      if (typeof entry.id === 'string' && entry.id.length > 0) entryMap.set(entry.id, entry)
+      if (entry.group && Array.isArray(entry.config)) indexEntries(entry.config)
+    }
+  }
+  for (const layer of layers) {
+    layer.patches.forEach((patch, index) => {
+      const evidence = `${layer.file}: entry ${String(index + 1)}`
+      const hasInsert = patch.insert !== undefined
+      if (hasInsert) {
+        if (!Array.isArray(patch.insert)) return
+        if (patch.id !== undefined) {
+          const target = entryMap.get(patch.id)
+          if (target === undefined) {
+            findings.push(finding('warning', 'PATCH_TARGET_NOT_FOUND', `${layer.label} insert targets missing row ${patch.id}.`, {
+              package: layer.package,
+              evidence,
+              suggestion: 'Check whether this overlay is intended for the selected profile and bundle order.',
+            }))
+            return
+          }
+          if (!target.group) {
+            findings.push(finding('warning', 'PATCH_TARGET_NOT_GROUP', `${layer.label} inserts into row ${patch.id}, which is not a group.`, {
+              package: layer.package,
+              evidence,
+              suggestion: 'Target a group row or use a root insert.',
+            }))
+            return
+          }
+          if (!Array.isArray(target.config)) target.config = []
+          target.config.push(...structuredClone(patch.insert))
+          indexEntries(target.config.slice(-patch.insert.length))
+        } else {
+          const inserted = structuredClone(patch.insert)
+          indexEntries(inserted)
+        }
+        return
+      }
+      if (patch.id === undefined) {
+        findings.push(finding('warning', 'PATCH_ID_REQUIRED', `${layer.label} has a non-insert patch without an id.`, {
+          package: layer.package,
+          evidence,
+          suggestion: 'Add the target row id or turn the entry into an insert patch.',
+        }))
+        return
+      }
+      const target = entryMap.get(patch.id)
+      if (target === undefined) {
+        findings.push(finding('warning', 'PATCH_TARGET_NOT_FOUND', `${layer.label} targets missing row ${patch.id}.`, {
+          package: layer.package,
+          evidence,
+          suggestion: 'Check whether this overlay is intended for the selected profile and bundle order.',
+        }))
+        return
+      }
+      if (patch.name !== undefined && patch.name !== target.name) {
+        findings.push(finding('warning', 'PATCH_NAME_MISMATCH', `${layer.label} name assertion does not match row ${patch.id}.`, {
+          package: layer.package,
+          evidence: `${evidence}: expected ${JSON.stringify(target.name)}, got ${JSON.stringify(patch.name)}`,
+          suggestion: 'Update the assertion or target the intended row.',
+        }))
+        return
+      }
+      for (const [key, value] of Object.entries(patch)) {
+        if (key !== 'id' && key !== 'insert' && key !== 'name') target[key] = structuredClone(value)
+      }
+    })
   }
 }
 
@@ -702,31 +804,268 @@ function inspectCredentials(file, findings) {
 }
 
 function inspectPatchFileIfPresent(file, subject, findings) {
-  if (existsSync(file)) inspectPatchFile(file, subject, findings)
+  return existsSync(file) ? inspectPatchFile(file, subject, findings) : undefined
+}
+
+function looksLikeSemverRange(value) {
+  return /^(?:\s*[v=~^<>*]|\s*\d)/.test(value)
+}
+
+function inspectPluginNodeEngine(record, nodeVersion, findings) {
+  const range = record.manifest?.engines?.node
+  if (range === undefined) return
+  const name = record.requestedName ?? record.manifest.name
+  if (typeof range !== 'string' || semver.validRange(range) === null) {
+    findings.push(finding('warning', 'INVALID_NODE_ENGINE_RANGE', `${name} declares an invalid Node.js engine range.`, {
+      package: name,
+      evidence: `${record.file}: engines.node = ${JSON.stringify(range)}`,
+      suggestion: 'The plugin author should publish a valid engines.node range.',
+    }))
+    return
+  }
+  if (nodeVersion === undefined) return
+  if (!semver.satisfies(nodeVersion, range, { includePrerelease: true })) {
+    findings.push(finding('warning', 'PLUGIN_NODE_VERSION_MISMATCH', `${name} does not support the Node.js version used by the active DSH CLI.`, {
+      package: name,
+      evidence: `engines.node ${range} (active ${nodeVersion})`,
+      suggestion: `Update ${name} or run DSH with a supported Node.js version.`,
+    }))
+  }
+}
+
+function lockedRegistryVersion(value) {
+  if (typeof value !== 'string') return undefined
+  const matched = value.match(/^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\(|$)/)?.[1]
+  return matched !== undefined && semver.valid(matched) !== null ? matched : undefined
+}
+
+function inspectPnpmLock(profileDir, dependencyEntriesList, records, findings, commandRepair, profile) {
+  const file = join(profileDir, 'pnpm-lock.yaml')
+  const installRepair = () => commandRepair(
+    `install-profile:${profile}`,
+    `Install the declared dependencies for profile ${profile}.`,
+    ['plugin', '--profile', profile, 'install'],
+    { profile },
+  )
+  if (!existsSync(file)) return { file, present: false }
+  let root
+  try {
+    const document = parseDocument(readFileSync(file, 'utf8'), { prettyErrors: true, uniqueKeys: true })
+    if (document.errors.length > 0) throw new Error(document.errors.map(error => error.message).join('; '))
+    root = document.toJS()
+  } catch (error) {
+    findings.push(finding('error', 'INVALID_PNPM_LOCKFILE', 'The profile pnpm lockfile cannot be parsed.', {
+      evidence: `${file}: ${error instanceof Error ? error.message : String(error)}`,
+      suggestion: 'Run the exact profile install command after repairing or regenerating the lockfile.',
+      repair: commandRepair(
+        `install-profile:${profile}`,
+        `Install the declared dependencies for profile ${profile}.`,
+        ['plugin', '--profile', profile, 'install'],
+        { profile },
+      ),
+    }))
+    return { file, present: true, valid: false }
+  }
+  const importer = objectRecord(objectRecord(objectRecord(root)?.importers)?.['.'])
+  const locked = importer?.dependencies
+  const lockedDependencies = objectRecord(locked)
+  if (lockedDependencies === undefined) {
+    if (dependencyEntriesList.length === 0 && locked === undefined) {
+      return { file, present: true, valid: true }
+    }
+    findings.push(finding('warning', 'PNPM_LOCKFILE_IMPORTER_MISSING', 'The profile pnpm lockfile has no usable root dependencies map.', {
+      evidence: file,
+      suggestion: 'Use the exact profile install command to reconcile the lockfile.',
+      repair: installRepair(),
+    }))
+    return { file, present: true, valid: false }
+  }
+  const declaredNames = new Set(dependencyEntriesList.map(([name]) => name))
+  for (const [name, declared] of dependencyEntriesList) {
+    const entry = lockedDependencies[name]
+    if (entry === undefined) {
+      findings.push(finding('warning', 'LOCKFILE_DEPENDENCY_MISSING', `Profile dependency ${name} is absent from the pnpm lockfile importer.`, {
+        package: name,
+        evidence: file,
+        suggestion: 'Use the exact profile install command to reconcile the manifest and lockfile.',
+        repair: installRepair(),
+      }))
+      continue
+    }
+    const lockedEntry = typeof entry === 'string' ? { version: entry } : objectRecord(entry)
+    const specifier = lockedEntry?.specifier
+    if (typeof specifier === 'string' && specifier !== declared) {
+      findings.push(finding('warning', 'LOCKFILE_SPECIFIER_MISMATCH', `Profile dependency ${name} has a different specifier in pnpm-lock.yaml.`, {
+        package: name,
+        evidence: `package.json ${declared} (lockfile ${specifier})`,
+        suggestion: 'Use the exact profile install command to reconcile the manifest and lockfile.',
+        repair: installRepair(),
+      }))
+    }
+    const lockedVersion = lockedRegistryVersion(lockedEntry?.version)
+    const installedVersion = records.get(name)?.manifest?.version
+    if (lockedVersion !== undefined && typeof installedVersion === 'string'
+      && semver.valid(installedVersion) !== null && installedVersion !== lockedVersion) {
+      findings.push(finding('warning', 'LOCKFILE_INSTALLED_VERSION_MISMATCH', `Profile dependency ${name} does not match its locked version.`, {
+        package: name,
+        evidence: `locked ${lockedVersion} (installed ${installedVersion})`,
+        suggestion: 'Use the exact profile install command to restore the locked installation.',
+        repair: installRepair(),
+      }))
+    }
+  }
+  for (const name of Object.keys(lockedDependencies)) {
+    if (declaredNames.has(name)) continue
+    findings.push(finding('warning', 'LOCKFILE_DEPENDENCY_STALE', `pnpm-lock.yaml still lists undeclared profile dependency ${name}.`, {
+      package: name,
+      evidence: file,
+      suggestion: 'Use the exact profile install command to remove stale lockfile importer entries.',
+      repair: installRepair(),
+    }))
+  }
+  return { file, present: true, valid: true }
+}
+
+function inspectRuntimeAlignment(harness, dshCli, findings) {
+  // Harness release tooling uses the root manifest as the DSH release-family
+  // baseline and bumps apps/cli plus the published members to the same version.
+  if (typeof harness.version !== 'string' || typeof dshCli?.version !== 'string') return
+  if (semver.valid(harness.version) === null || semver.valid(dshCli.version) === null) return
+  if (harness.version === dshCli.version) return
+  findings.push(finding('warning', 'DSH_CLI_HARNESS_VERSION_MISMATCH', 'The active DSH CLI and diagnosed Harness installation have different versions.', {
+    evidence: `DSH CLI ${dshCli.version} (Harness ${harness.version})`,
+    suggestion: 'Diagnose with the DSH CLI and Harness checkout used by the same installation.',
+  }))
+}
+
+function inspectProfileHarnessPackages(profileDir, home, harness, findings) {
+  const profileScope = join(profileDir, 'node_modules', '@deepseek-ai')
+  if (!existsSync(profileScope)) return
+  let entries
+  try {
+    entries = readdirSync(profileScope, { withFileTypes: true })
+  } catch (error) {
+    findings.push(finding('warning', 'PROFILE_HARNESS_SCOPE_UNREADABLE', 'The profile-local @deepseek-ai package scope cannot be read as a directory.', {
+      evidence: `${profileScope}: ${error instanceof Error ? error.message : String(error)}`,
+      suggestion: 'Reinstall the profile with the active DSH CLI to repair its node_modules layout.',
+    }))
+    return
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
+    const name = `@deepseek-ai/${entry.name}`
+    if (!name.startsWith('@deepseek-ai/dsh-') && name !== '@deepseek-ai/dsh') continue
+    const profilePackage = join(profileScope, entry.name)
+    const profileManifestFile = join(profilePackage, 'package.json')
+    if (!existsSync(profileManifestFile)) continue
+    let profileManifest
+    try {
+      profileManifest = JSON.parse(readFileSync(profileManifestFile, 'utf8'))
+    } catch {
+      continue
+    }
+    const sharedPackage = join(home, 'profiles', 'node_modules', '@deepseek-ai', entry.name)
+    if (existsSync(join(sharedPackage, 'package.json'))) {
+      try {
+        if (realpathSync(profilePackage) !== realpathSync(sharedPackage)) {
+          const sharedManifest = JSON.parse(readFileSync(join(sharedPackage, 'package.json'), 'utf8'))
+          if (typeof profileManifest.version === 'string' && typeof sharedManifest.version === 'string'
+            && profileManifest.version !== sharedManifest.version) {
+            findings.push(finding('warning', 'DUPLICATE_HARNESS_PACKAGE_VERSION', `${name} exists in the profile and shared DSH installation at different versions.`, {
+              package: name,
+              evidence: `profile ${profileManifest.version} (${profilePackage}), shared ${sharedManifest.version} (${sharedPackage})`,
+              suggestion: 'Reinstall the profile with the active DSH CLI so its module resolution uses one compatible version.',
+            }))
+          }
+        }
+      } catch {
+        // Other manifest and filesystem checks report unreadable package state.
+      }
+    }
+    if (harness.authoritative && !harness.packages.has(name)) {
+      findings.push(finding('warning', 'STALE_PROFILE_HARNESS_PACKAGE', `${name} remains in the profile but is absent from the active Harness source tree.`, {
+        package: name,
+        evidence: profileManifestFile,
+        suggestion: 'Reinstall the profile with the active DSH CLI and review plugins that still require this package.',
+      }))
+    }
+  }
 }
 
 function inspectCompatibility(record, context) {
-  const { commandRepair, findings, harnessPackages, profile, resolvePackage } = context
-  const peers = dependencyEntries(record.manifest.peerDependencies, 'peerDependencies', record.file, findings)
+  const {
+    commandRepair, findings, harnessPackages, harnessPackagesAuthoritative, profile, resolvePackage,
+  } = context
+  const packageName = record.requestedName ?? record.manifest.name
+  const peers = dependencyEntries(record.manifest.peerDependencies, 'peerDependencies', record.file, findings, packageName)
+  const dependencies = dependencyEntries(record.manifest.dependencies, 'dependencies', record.file, findings, packageName)
+  if (harnessPackagesAuthoritative) {
+    const removedPeers = peers
+      .map(([name]) => name)
+      .filter(name => name.startsWith('@deepseek-ai/dsh-') && !harnessPackages.has(name))
+      .sort()
+    if (removedPeers.length > 0) {
+      findings.push(finding('warning', 'LEGACY_HARNESS_PEERS', `${packageName} still declares Harness packages that no longer exist in the active source tree.`, {
+        package: packageName,
+        evidence: removedPeers.join(', '),
+        suggestion: 'Update this plugin before relying on it with the current DSH release.',
+        repair: updateRepair(profile, packageName, commandRepair),
+      }))
+    }
+    const removedDependencies = dependencies
+      .map(([name]) => name)
+      .filter(name => name.startsWith('@deepseek-ai/dsh-') && !harnessPackages.has(name))
+      .sort()
+    if (removedDependencies.length > 0) {
+      findings.push(finding('warning', 'LEGACY_HARNESS_DEPENDENCIES', `${packageName} depends on Harness packages that no longer exist in the active source tree.`, {
+        package: packageName,
+        evidence: removedDependencies.join(', '),
+        suggestion: 'Update this plugin; its bundled DSH APIs may be incompatible with the current release.',
+        repair: updateRepair(profile, packageName, commandRepair),
+      }))
+    }
+  }
   const mismatches = []
   for (const [name, range] of peers) {
     if (!name.startsWith('@deepseek-ai/') && name !== 'cordis') continue
+    if (semver.validRange(range) === null) {
+      findings.push(finding('warning', 'INVALID_HARNESS_PEER_RANGE', `${packageName} declares an invalid Harness peer range for ${name}.`, {
+        package: packageName,
+        evidence: `${name}: ${range}`,
+        suggestion: 'The plugin author should publish a valid peer dependency range.',
+      }))
+      continue
+    }
     const supplier = harnessPackages.get(name) ?? resolvePackage(name)
     if (supplier === undefined) continue
     const version = supplier.manifest?.version
-    if (typeof version !== 'string' || semver.valid(version) === null || semver.validRange(range) === null) continue
+    if (typeof version !== 'string' || semver.valid(version) === null) continue
     if (semver.satisfies(version, range, { includePrerelease: true })) continue
     mismatches.push(`${name} ${range} (active ${version})`)
   }
   if (mismatches.length > 0) {
-    const name = record.requestedName ?? record.manifest.name
-    findings.push(finding('warning', 'HARNESS_PEER_VERSION_MISMATCH', `${name} has Harness peer ranges that do not accept the active versions.`, {
-      package: name,
+    findings.push(finding('warning', 'HARNESS_PEER_VERSION_MISMATCH', `${packageName} has Harness peer ranges that do not accept the active versions.`, {
+      package: packageName,
       evidence: mismatches.join(', '),
-      suggestion: `Update ${name} to a release compatible with the active Harness.`,
-      repair: updateRepair(profile, name, commandRepair),
+      suggestion: `Update ${packageName} to a release compatible with the active Harness.`,
+      repair: updateRepair(profile, packageName, commandRepair),
     }))
   }
+}
+
+function hasHarnessCompatibilityDeclaration(record) {
+  const peers = objectRecord(record.manifest.peerDependencies)
+  return peers !== undefined && Object.keys(peers)
+    .some(name => name.startsWith('@deepseek-ai/') || name === 'cordis')
+}
+
+function pluginCompatibility(record, findings) {
+  const name = record.requestedName ?? record.manifest.name
+  const related = findings.filter(item => item.package === name)
+  if (related.some(item => item.severity === 'error')) return 'incompatible'
+  if (related.some(item => item.severity === 'warning')) return 'risk'
+  if (!hasHarnessCompatibilityDeclaration(record)) return 'unknown'
+  return 'compatible'
 }
 
 export function defaultDshHome(env = process.env) {
@@ -779,6 +1118,15 @@ export function diagnose(options = {}) {
   const resolvePackage = packageResolver(profileDir, home, harness.packages, findings)
   const resolveBundle = bundleResolver(profileDir, home, harness.packages, findings)
   const dependencyEntriesList = dependencyEntries(profileManifest.dependencies, 'dependencies', profileManifestFile, findings)
+  for (const [name, range] of dependencyEntriesList) {
+    if (looksLikeSemverRange(range) && semver.validRange(range) === null) {
+      findings.push(finding('error', 'INVALID_PROFILE_DEPENDENCY_RANGE', `Profile dependency ${name} has an invalid semantic version range.`, {
+        package: name,
+        evidence: `${profileManifestFile}: ${range}`,
+        suggestion: 'Repair the dependency range before installing or starting this profile.',
+      }))
+    }
+  }
   const dependencyNames = dependencyEntriesList.map(([name]) => name)
   const dshConfig = profileManifest.dsh
   const dshConfigValid = dshConfig === undefined || objectRecord(dshConfig) !== undefined
@@ -818,6 +1166,11 @@ export function diagnose(options = {}) {
     const record = resolvePackage(name)
     if (record !== undefined) records.set(name, record)
   }
+  const lockfile = inspectPnpmLock(
+    profileDir, dependencyEntriesList, records, findings, commandRepair, profile,
+  )
+  inspectRuntimeAlignment(harness, dshCli, findings)
+  inspectProfileHarnessPackages(profileDir, home, harness, findings)
   const bundleRecords = new Map()
   for (const name of bundleNames) {
     const record = resolveBundle(name)
@@ -873,10 +1226,23 @@ export function diagnose(options = {}) {
       }))
     }
   }
-  for (const name of bundleNames) inspectBundle(name, bundleRecords.get(name), findings)
+  const patchLayers = []
+  let patchCompositionValid = true
+  for (const name of bundleNames) {
+    const layer = inspectBundle(name, bundleRecords.get(name), findings)
+    if (layer === undefined) patchCompositionValid = false
+    else patchLayers.push(layer)
+  }
 
-  inspectPatchFileIfPresent(join(profileDir, 'cordis.patch.yml'), 'profile patch', findings)
-  inspectPatchFileIfPresent(join(home, 'cordis.patch.yml'), 'home patch', findings)
+  for (const [file, subject, label] of [
+    [join(profileDir, 'cordis.patch.yml'), 'profile patch', 'profile patch'],
+    [join(home, 'cordis.patch.yml'), 'home patch', 'home patch'],
+  ]) {
+    const patches = inspectPatchFileIfPresent(file, subject, findings)
+    if (patches !== undefined) patchLayers.push({ file, label, patches })
+    else if (existsSync(file)) patchCompositionValid = false
+  }
+  if (patchCompositionValid) inspectPatchComposition(patchLayers, findings)
   inspectSettings(join(home, 'settings.yaml'), findings)
   inspectCredentials(join(home, '.credentials.yaml'), findings)
 
@@ -898,7 +1264,13 @@ export function diagnose(options = {}) {
       profile,
       resolvePackage,
       harnessPackages: harness.packages,
+      harnessPackagesAuthoritative: harness.authoritative,
     })
+    inspectPluginNodeEngine(
+      record,
+      dshCli?.command?.[0] === process.execPath ? process.version : undefined,
+      findings,
+    )
   }
 
   return finish({
@@ -906,16 +1278,23 @@ export function diagnose(options = {}) {
     profile,
     profileDir,
     harness: { root: harness.root, version: harness.version },
+    lockfile,
     dshCli: dshCli === undefined
       ? { available: false, commandRepairNeeded }
       : { available: true, commandRepairNeeded, ...dshCli },
-    packages: thirdPartyRecords.map(record => ({
-      name: record.requestedName ?? record.manifest.name,
-      version: record.manifest.version,
-      directory: record.directory,
-      client: record.manifest?.dsh?.client !== undefined,
-      bundle: record.manifest?.dsh?.bundle !== undefined,
-    })),
+    packages: dependencyNames.map(name => {
+      const record = records.get(name)
+      if (record === undefined) return { name, installed: false, compatibility: 'incompatible' }
+      return {
+        name: record.requestedName ?? record.manifest.name,
+        version: record.manifest.version,
+        directory: record.directory,
+        installed: true,
+        client: record.manifest?.dsh?.client !== undefined,
+        bundle: record.manifest?.dsh?.bundle !== undefined,
+        compatibility: pluginCompatibility(record, findings),
+      }
+    }),
   }, findings)
 }
 
@@ -929,6 +1308,13 @@ function finish(context, findings) {
     warnings: findings.filter(item => item.severity === 'warning').length,
     info: findings.filter(item => item.severity === 'info').length,
   }
+  const compatibility = {
+    incompatible: context.packages.filter(item => item.compatibility === 'incompatible').length,
+    risk: context.packages.filter(item => item.compatibility === 'risk').length,
+    unknown: context.packages.filter(item => item.compatibility === 'unknown').length,
+    compatible: context.packages.filter(item => item.compatibility === 'compatible').length,
+  }
+  context = { ...context, compatibility }
   return { version: 1, ok: summary.errors === 0, context, summary, findings }
 }
 
@@ -952,7 +1338,10 @@ export function formatReport(report, options = {}) {
     `${zh ? 'DSH 主目录' : 'Home'}: ${report.context.home}`,
     `Harness: ${report.context.harness.version ?? 'unknown'}${report.context.harness.root ? ` (${report.context.harness.root})` : ''}`,
     `${zh ? 'DSH CLI' : 'DSH CLI'}: ${cliText}`,
-    `${zh ? '已检查第三方包' : 'Checked third-party packages'}: ${String(report.context.packages.length)}`,
+    `${zh ? 'Profile 插件' : 'Profile plugins'}: ${String(report.context.packages.length)}`,
+    zh
+      ? `插件兼容性: ${String(report.context.compatibility.incompatible)} 个不兼容，${String(report.context.compatibility.risk)} 个风险，${String(report.context.compatibility.unknown)} 个未知，${String(report.context.compatibility.compatible)} 个兼容`
+      : `Plugin compatibility: ${String(report.context.compatibility.incompatible)} incompatible, ${String(report.context.compatibility.risk)} risk, ${String(report.context.compatibility.unknown)} unknown, ${String(report.context.compatibility.compatible)} compatible`,
     `${zh ? '输出语言' : 'Output language'}: ${languageName(language)}`,
     '',
   ]

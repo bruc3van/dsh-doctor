@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 
 const cli = resolve('src/cli.mjs')
+const packageVersion = JSON.parse(readFileSync(resolve('package.json'), 'utf8')).version
 
 test('CLI reports invalid manifests as structured JSON without a stack trace', () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-doctor-cli-'))
@@ -33,7 +34,7 @@ test('CLI uses exit code 2 for arguments and machine-readable runtime failures',
 test('CLI exposes the package version and repair flags', () => {
   const version = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' })
   assert.equal(version.status, 0)
-  assert.equal(version.stdout, '0.1.2\n')
+  assert.equal(version.stdout, `${packageVersion}\n`)
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' })
   assert.match(help.stdout, /--fix, --repair/)
   assert.match(help.stdout, /--yes/)
@@ -99,4 +100,22 @@ test('CLI follows the DSH locale preference and supports an explicit language', 
 
   result = spawnSync(process.execPath, [cli, '--home', home, '--lang', 'zh', '--json'], { encoding: 'utf8' })
   assert.match(JSON.parse(result.stdout).findings[0].message, /must contain a JSON object/)
+})
+
+test('CLI keeps command output inside a single JSON document during repairs', () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-doctor-json-repair-'))
+  const profile = join(home, 'profiles', 'web')
+  const fakeDsh = join(home, 'fake-dsh.mjs')
+  mkdirSync(profile, { recursive: true })
+  writeFileSync(join(profile, 'package.json'), `${JSON.stringify({ dependencies: { missing: '1.0.0' } })}\n`)
+  writeFileSync(fakeDsh, 'process.stdout.write("fake stdout\\n"); process.stderr.write("fake stderr\\n")\n')
+
+  const result = spawnSync(process.execPath, [
+    cli, '--home', home, '--fix', '--yes', '--json', '--dsh-command', fakeDsh,
+  ], { encoding: 'utf8' })
+  assert.equal(result.status, 1)
+  const report = JSON.parse(result.stdout)
+  assert.equal(report.repairs[0].status, 'applied')
+  assert.equal(report.repairs[0].stdout, 'fake stdout\n')
+  assert.equal(report.repairs[0].stderr, 'fake stderr\n')
 })

@@ -82,26 +82,42 @@ function applyJsonEdit(action) {
   return { id: action.id, status: 'applied', backup }
 }
 
-function applyCommand(action) {
+function limitedOutput(value, limit = 8192) {
+  if (typeof value !== 'string' || value.length === 0) return undefined
+  return value.length <= limit ? value : `${value.slice(0, limit)}\n... output truncated by DSH Doctor ...`
+}
+
+function applyCommand(action, options) {
   const [command, ...args] = action.command
+  const captureOutput = options.captureOutput === true
   const result = crossSpawn.sync(command, args, {
-    stdio: 'inherit',
+    stdio: captureOutput ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    ...captureOutput ? { encoding: 'utf8' } : {},
     env: action.env === undefined ? process.env : { ...process.env, ...action.env },
   })
   if (result.error != null) throw result.error
   if (result.status !== 0) {
-    throw new Error(result.signal === null
+    const reason = result.signal === null
       ? `${command} exited with status ${String(result.status)}`
-      : `${command} was terminated by signal ${result.signal}`)
+      : `${command} was terminated by signal ${result.signal}`
+    const details = captureOutput ? limitedOutput(result.stderr) ?? limitedOutput(result.stdout) : undefined
+    throw new Error(details === undefined ? reason : `${reason}: ${details.trimEnd()}`)
   }
-  return { id: action.id, status: 'applied' }
+  const stdout = captureOutput ? limitedOutput(result.stdout) : undefined
+  const stderr = captureOutput ? limitedOutput(result.stderr) : undefined
+  return {
+    id: action.id,
+    status: 'applied',
+    ...(stdout === undefined ? {} : { stdout }),
+    ...(stderr === undefined ? {} : { stderr }),
+  }
 }
 
-export function applyRepairs(actions) {
+export function applyRepairs(actions, options = {}) {
   const results = []
   for (const action of actions) {
     try {
-      results.push(action.kind === 'json-edit' ? applyJsonEdit(action) : applyCommand(action))
+      results.push(action.kind === 'json-edit' ? applyJsonEdit(action) : applyCommand(action, options))
     } catch (error) {
       results.push({
         id: action.id,
