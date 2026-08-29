@@ -59,7 +59,7 @@ const ZH_MESSAGES = {
   PACKAGE_NAME_MISMATCH: item => `${item.package ?? '依赖'}解析到了名称不匹配的包。`,
   INVALID_HARNESS_ROOT: () => '指定的 Harness 根目录不是有效的源码工作区。',
   INVALID_WORKSPACE_MANIFEST: () => '已忽略一个无效的 Harness workspace 包清单。',
-  HARNESS_INSTALLATION_UNKNOWN: () => '无法定位这个 DSH Home 实际使用的 Harness。',
+  HARNESS_INSTALLATION_UNKNOWN: () => '无法定位这个 DSH Home 当前使用的 DSH 安装。',
   INVALID_DEPENDENCY_MAP: item => `${captured(item.message, /^(\S+) must be/) ?? '依赖字段'}必须是“包名到版本范围”的对象。`,
   INVALID_CLIENT_DECLARATION: item => `${item.package} 的 dsh.client 声明无效。`,
   INVALID_CLIENT_PLATFORM: item => `${item.package} 的 dsh.client.platform 必须是字符串。`,
@@ -71,10 +71,10 @@ const ZH_MESSAGES = {
   CLIENT_BUNDLE_UNREADABLE: item => `无法读取 ${item.package} 的客户端 bundle。`,
   UNDECLARED_CLIENT_REQUIRE: item => `${item.package} 引用了 ${captured(item.message, / requires (.+) but does not/) ?? '未声明模块'}，但没有在 dsh.client.external 中声明。`,
   REDUNDANT_CLIENT_EXTERNAL: item => `${item.package} 把平台模块 ${captured(item.message, / module (.+) as an external/) ?? ''} 重复声明为 external。`,
-  CLIENT_EXTERNAL_WITHOUT_SUPPLIER: item => `${item.package} 请求了 ${captured(item.message, / requests (.+), but/) ?? '客户端模块'}，但当前 Harness 没有对应的模块提供方。`,
-  REMOVED_CLIENT_INJECT: item => `${item.package} 注入了 ${captured(item.message, / injects (.+), which/) ?? '已移除的模块'}，但当前 Harness 源码中已不存在该模块。`,
-  LEGACY_HARNESS_PEERS: item => `${item.package} 仍声明了当前 Harness 源码中已不存在的旧包。`,
-  LEGACY_HARNESS_DEPENDENCIES: item => `${item.package} 仍依赖当前 Harness 源码中已不存在的旧包。`,
+  CLIENT_EXTERNAL_WITHOUT_SUPPLIER: item => `${item.package} 请求了 ${captured(item.message, / requests (.+), but/) ?? '客户端模块'}，但当前使用的 DSH 没有对应的模块提供方。`,
+  REMOVED_CLIENT_INJECT: item => `${item.package} 注入了 ${captured(item.message, / injects (.+), which/) ?? '已移除的模块'}，但当前使用的 DSH 中已不存在该模块。`,
+  LEGACY_HARNESS_PEERS: item => `${item.package} 声明依赖当前使用的 DSH 已移除的旧接口包。`,
+  LEGACY_HARNESS_DEPENDENCIES: item => `${item.package} 仍依赖当前使用的 DSH 中已不存在的旧包。`,
   BUNDLE_NOT_INSTALLED: item => `配置中的 bundle ${item.package} 尚未安装。`,
   BUNDLE_DECLARATION_MISSING: item => `${item.package} 被列为 profile bundle，但没有声明 dsh.bundle.patch。`,
   BUNDLE_PATCH_MISSING: item => `${item.package} 的 bundle patch 文件缺失。`,
@@ -92,7 +92,7 @@ const ZH_MESSAGES = {
   INVALID_CREDENTIALS_DOCUMENT: () => 'Harness 凭据文件无法解析。',
   INVALID_CREDENTIALS_ROOT: () => 'Harness 凭据文件顶层必须是映射。',
   INVALID_CREDENTIALS_LAYOUT: () => 'Harness 凭据文件不是受支持的 version 1 结构。',
-  HARNESS_PEER_VERSION_MISMATCH: item => `${item.package} 声明的 Harness peer 版本范围不接受当前已安装版本。`,
+  HARNESS_PEER_VERSION_MISMATCH: item => `${item.package} 声明的兼容范围不包含当前使用的 DSH 版本。`,
   INVALID_PROFILE_NAME: item => `Profile 名称无效：${captured(item.message, /^Invalid profile name (.+)\.$/) ?? ''}`,
   PROFILE_NOT_FOUND: item => `Profile ${captured(item.message, /^Profile (.+) does not exist\.$/) ?? ''} 不存在。`,
   INVALID_DSH_CONFIGURATION: () => 'dsh 字段存在时必须是对象。',
@@ -114,7 +114,7 @@ const ZH_MESSAGES = {
   LOCKFILE_DEPENDENCY_STALE: item => `pnpm lockfile 仍包含未声明的依赖 ${item.package}。`,
   DSH_CLI_HARNESS_VERSION_MISMATCH: () => '当前 DSH CLI 与诊断到的 Harness 版本不一致。',
   DUPLICATE_HARNESS_PACKAGE_VERSION: item => `${item.package} 在 profile 与共享 DSH 安装中存在不同版本。`,
-  STALE_PROFILE_HARNESS_PACKAGE: item => `${item.package} 残留在 profile 中，但当前 Harness 源码已不再包含它。`,
+  STALE_PROFILE_HARNESS_PACKAGE: item => `${item.package} 残留在 profile 中，但当前使用的 DSH 已不再包含它。`,
   PROFILE_HARNESS_SCOPE_UNREADABLE: () => 'Profile 内的 @deepseek-ai 包作用域无法作为目录读取。',
 }
 
@@ -155,7 +155,7 @@ const ZH_SUGGESTIONS = {
   INVALID_SETTINGS_ROOT: () => '把顶层标量或数组替换为映射。',
   INVALID_CREDENTIALS_DOCUMENT: () => '只修复报告的结构；Doctor 永远不会输出或重写秘密值。',
   INVALID_CREDENTIALS_LAYOUT: () => '迁移文档结构，不要暴露或修改秘密值。',
-  HARNESS_PEER_VERSION_MISMATCH: item => `把 ${item.package} 更新到兼容当前 Harness 的版本。`,
+  HARNESS_PEER_VERSION_MISMATCH: item => `把 ${item.package} 更新到兼容当前使用的 DSH 的版本。`,
   PROFILE_NOT_FOUND: () => '先启动一次该 profile，或用当前 DSH 安装初始化它。',
   INVALID_DSH_CONFIGURATION: () => '启动 Harness 前，请先修复 dsh 配置对象。',
   INVALID_PROFILE_CONFIGURATION: () => '启动 Harness 前，请先修复 dsh.profile 配置对象。',
@@ -188,9 +188,21 @@ export function localizedFinding(item, language) {
   if (language !== 'zh') return item
   const message = ZH_MESSAGES[item.code]?.(item) ?? item.message
   const suggestion = item.suggestion === undefined ? undefined : (ZH_SUGGESTIONS[item.code]?.(item) ?? item.suggestion)
-  const evidence = typeof item.evidence === 'string'
-    ? item.evidence.replaceAll('(active ', '(当前 ').replace(/ at line (\d+), column (\d+)/g, '，第 $1 行第 $2 列')
-    : item.evidence
+  const peerGroups = item.details?.peerVersionGroups
+  const evidence = Array.isArray(peerGroups)
+    ? peerGroups.flatMap((group, index) => [
+      ...(peerGroups.length > 1 ? [`第 ${String(index + 1)} 组：`] : []),
+      `${peerGroups.length > 1 ? '  ' : ''}插件要求：${group.required}`,
+      `${peerGroups.length > 1 ? '  ' : ''}当前 DSH：${group.active}`,
+      `${peerGroups.length > 1 ? '  ' : ''}涉及 ${String(group.packages.length)} 个包：${group.packages.join('、')}`,
+    ]).join('\n')
+    : typeof item.evidence === 'string'
+      ? (item.code === 'LEGACY_HARNESS_PEERS' || item.code === 'LEGACY_HARNESS_DEPENDENCIES'
+          ? item.evidence.replaceAll(', ', '、')
+          : item.evidence)
+        .replaceAll('(active ', '(当前 ')
+        .replace(/ at line (\d+), column (\d+)/g, '，第 $1 行第 $2 列')
+      : item.evidence
   return { ...item, message, suggestion, evidence }
 }
 

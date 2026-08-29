@@ -39,6 +39,7 @@ function finding(severity, code, message, options = {}) {
     message,
     ...options.package === undefined ? {} : { package: options.package },
     ...options.evidence === undefined ? {} : { evidence: options.evidence },
+    ...options.details === undefined ? {} : { details: options.details },
     ...options.suggestion === undefined ? {} : { suggestion: options.suggestion },
     ...options.repair === undefined ? {} : { repair: options.repair },
   }
@@ -293,7 +294,7 @@ function resolveHarnessContext(home, explicitRoot, findings) {
     return { root: canonical, packages: new Map(), version: manifest?.version, authoritative: false }
   }
 
-  findings.push(finding('warning', 'HARNESS_INSTALLATION_UNKNOWN', 'Could not locate the Harness installation used by this home.', {
+  findings.push(finding('warning', 'HARNESS_INSTALLATION_UNKNOWN', 'Could not locate the DSH installation currently used by this home.', {
     evidence: sharedDsh,
     suggestion: 'Pass --harness-root when diagnosing a source checkout.',
   }))
@@ -556,7 +557,7 @@ function inspectClientPackage(record, context) {
       ? harnessPackages.get(supplier)
       : harnessPackages.get(supplier) ?? resolvePackage(supplier)
     if (supplied === undefined || supplied.manifest?.dsh?.client === undefined) {
-      findings.push(finding('error', 'CLIENT_EXTERNAL_WITHOUT_SUPPLIER', `${name} requests ${specifier}, but the active Harness has no client module supplier.`, {
+      findings.push(finding('error', 'CLIENT_EXTERNAL_WITHOUT_SUPPLIER', `${name} requests ${specifier}, but the active DSH has no client module supplier.`, {
         package: name,
         evidence: record.file,
         suggestion: disableSuggestion,
@@ -569,7 +570,7 @@ function inspectClientPackage(record, context) {
     for (const dependency of inject ?? []) {
       if (!dependency.startsWith('@deepseek-ai/dsh-')) continue
       if (!harnessPackages.has(stripClientSuffix(dependency))) {
-        findings.push(finding('error', 'REMOVED_CLIENT_INJECT', `${name} injects ${dependency}, which is absent from the active Harness source tree.`, {
+        findings.push(finding('error', 'REMOVED_CLIENT_INJECT', `${name} injects ${dependency}, which is absent from the active DSH.`, {
           package: name,
           evidence: record.file,
           suggestion: disableSuggestion,
@@ -983,7 +984,7 @@ function inspectProfileHarnessPackages(profileDir, home, harness, findings) {
       }
     }
     if (harness.authoritative && !harness.packages.has(name)) {
-      findings.push(finding('warning', 'STALE_PROFILE_HARNESS_PACKAGE', `${name} remains in the profile but is absent from the active Harness source tree.`, {
+      findings.push(finding('warning', 'STALE_PROFILE_HARNESS_PACKAGE', `${name} remains in the profile but is absent from the active DSH.`, {
         package: name,
         evidence: profileManifestFile,
         suggestion: 'Reinstall the profile with the active DSH CLI and review plugins that still require this package.',
@@ -1005,7 +1006,7 @@ function inspectCompatibility(record, context) {
       .filter(name => name.startsWith('@deepseek-ai/dsh-') && !harnessPackages.has(name))
       .sort()
     if (removedPeers.length > 0) {
-      findings.push(finding('warning', 'LEGACY_HARNESS_PEERS', `${packageName} still declares Harness packages that no longer exist in the active source tree.`, {
+      findings.push(finding('warning', 'LEGACY_HARNESS_PEERS', `${packageName} declares old interface packages that the active DSH has removed.`, {
         package: packageName,
         evidence: removedPeers.join(', '),
         suggestion: 'Update this plugin before relying on it with the current DSH release.',
@@ -1017,7 +1018,7 @@ function inspectCompatibility(record, context) {
       .filter(name => name.startsWith('@deepseek-ai/dsh-') && !harnessPackages.has(name))
       .sort()
     if (removedDependencies.length > 0) {
-      findings.push(finding('warning', 'LEGACY_HARNESS_DEPENDENCIES', `${packageName} depends on Harness packages that no longer exist in the active source tree.`, {
+      findings.push(finding('warning', 'LEGACY_HARNESS_DEPENDENCIES', `${packageName} depends on Harness packages that no longer exist in the active DSH.`, {
         package: packageName,
         evidence: removedDependencies.join(', '),
         suggestion: 'Update this plugin; its bundled DSH APIs may be incompatible with the current release.',
@@ -1041,13 +1042,31 @@ function inspectCompatibility(record, context) {
     const version = supplier.manifest?.version
     if (typeof version !== 'string' || semver.valid(version) === null) continue
     if (semver.satisfies(version, range, { includePrerelease: true })) continue
-    mismatches.push(`${name} ${range} (active ${version})`)
+    mismatches.push({ name, required: range, active: version })
   }
   if (mismatches.length > 0) {
-    findings.push(finding('warning', 'HARNESS_PEER_VERSION_MISMATCH', `${packageName} has Harness peer ranges that do not accept the active versions.`, {
+    const grouped = new Map()
+    for (const mismatch of mismatches) {
+      const key = JSON.stringify([mismatch.required, mismatch.active])
+      const group = grouped.get(key) ?? {
+        required: mismatch.required, active: mismatch.active, packages: [],
+      }
+      group.packages.push(mismatch.name)
+      grouped.set(key, group)
+    }
+    const groups = [...grouped.values()]
+      .map(group => ({ ...group, packages: group.packages.sort() }))
+    const evidence = groups.flatMap((group, index) => [
+      ...(groups.length > 1 ? [`Group ${String(index + 1)}:`] : []),
+      `${groups.length > 1 ? '  ' : ''}Plugin requires: ${group.required}`,
+      `${groups.length > 1 ? '  ' : ''}Active DSH: ${group.active}`,
+      `${groups.length > 1 ? '  ' : ''}Affected ${String(group.packages.length)} package(s): ${group.packages.join(', ')}`,
+    ]).join('\n')
+    findings.push(finding('warning', 'HARNESS_PEER_VERSION_MISMATCH', `${packageName} declares compatibility ranges that exclude the active DSH version.`, {
       package: packageName,
-      evidence: mismatches.join(', '),
-      suggestion: `Update ${packageName} to a release compatible with the active Harness.`,
+      evidence,
+      details: { peerVersionGroups: groups },
+      suggestion: `Update ${packageName} to a release compatible with the active DSH.`,
       repair: updateRepair(profile, packageName, commandRepair),
     }))
   }
@@ -1318,6 +1337,20 @@ function finish(context, findings) {
   return { version: 1, ok: summary.errors === 0, context, summary, findings }
 }
 
+function appendReportField(lines, label, value, indent = '      ') {
+  const valueLines = String(value).split('\n')
+  if (valueLines.length === 1) {
+    lines.push(`${indent}${label}: ${valueLines[0]}`)
+    return
+  }
+  lines.push(`${indent}${label}:`)
+  lines.push(...valueLines.map(line => `${indent}  ${line}`))
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.filter(value => typeof value === 'string' && value.length > 0))]
+}
+
 export function formatReport(report, options = {}) {
   const color = options.color ?? false
   const language = options.language ?? 'en'
@@ -1336,7 +1369,7 @@ export function formatReport(report, options = {}) {
     'DSH Doctor',
     `${zh ? 'Profile' : 'Profile'}: ${report.context.profile}`,
     `${zh ? 'DSH 主目录' : 'Home'}: ${report.context.home}`,
-    `Harness: ${report.context.harness.version ?? 'unknown'}${report.context.harness.root ? ` (${report.context.harness.root})` : ''}`,
+    `${zh ? '当前使用的 DSH' : 'Active DSH'}: ${report.context.harness.version ?? 'unknown'}${report.context.harness.root ? ` (${report.context.harness.root})` : ''}`,
     `${zh ? 'DSH CLI' : 'DSH CLI'}: ${cliText}`,
     `${zh ? 'Profile 插件' : 'Profile plugins'}: ${String(report.context.packages.length)}`,
     zh
@@ -1345,19 +1378,130 @@ export function formatReport(report, options = {}) {
     `${zh ? '输出语言' : 'Output language'}: ${languageName(language)}`,
     '',
   ]
-  if (report.findings.length === 0) {
+  const packageNames = new Set(report.context.packages.map(item => item.name))
+  const pluginFindings = new Map()
+  const environmentFindings = []
+  for (const item of report.findings) {
+    if (item.package !== undefined && packageNames.has(item.package)) {
+      const items = pluginFindings.get(item.package) ?? []
+      items.push(item)
+      pluginFindings.set(item.package, items)
+    } else environmentFindings.push(item)
+  }
+  const problemPackages = report.context.packages
+    .filter(item => (item.compatibility === 'incompatible' || item.compatibility === 'risk')
+      && pluginFindings.has(item.name))
+    .sort((left, right) => {
+      const rank = { incompatible: 0, risk: 1 }
+      return rank[left.compatibility] - rank[right.compatibility] || left.name.localeCompare(right.name)
+    })
+  const unknownPackages = report.context.packages
+    .filter(item => item.compatibility === 'unknown')
+    .sort((left, right) => left.name.localeCompare(right.name))
+
+  if (report.findings.length === 0 && unknownPackages.length === 0) {
     lines.push(paint('info', zh ? '正常  当前检查范围内未发现问题。' : 'OK  No problems found by the MVP checks.'))
   } else {
-    for (const original of report.findings) {
+    if (problemPackages.length > 0) {
+      lines.push(zh
+        ? `插件问题（${String(problemPackages.length)} 个）`
+        : `Plugin problems (${String(problemPackages.length)})`)
+      lines.push('')
+      for (const plugin of problemPackages) {
+        const originals = pluginFindings.get(plugin.name)
+        const status = plugin.compatibility === 'incompatible'
+          ? zh ? '不兼容' : 'INCOMPATIBLE'
+          : zh ? '有风险' : 'RISK'
+        const severity = plugin.compatibility === 'incompatible' ? 'error' : 'warning'
+        lines.push(paint(severity, `[${status}] ${plugin.name}`))
+        appendReportField(lines, zh ? '版本' : 'Version', plugin.installed === false
+          ? zh ? '未安装' : 'not installed'
+          : plugin.version ?? (zh ? '未知' : 'unknown'))
+        lines.push(zh
+          ? `      问题（${String(originals.length)}）:`
+          : `      Problems (${String(originals.length)}):`)
+        originals.forEach((original, index) => {
+          const item = localizedFinding(original, language)
+          const prefix = `${plugin.name} `
+          const message = item.message.startsWith(prefix) ? item.message.slice(prefix.length) : item.message
+          lines.push(`        ${String(index + 1)}. [${item.code}] ${message}`)
+          if (item.evidence !== undefined) appendReportField(
+            lines, zh ? '证据' : 'Evidence', item.evidence, '          ',
+          )
+        })
+        const suggestionGroups = new Map()
+        for (const original of originals) {
+          const suggestion = localizedFinding(original, language).suggestion
+          if (suggestion === undefined) continue
+          const key = original.repair?.id ?? `suggestion:${suggestion}`
+          if (!suggestionGroups.has(key)) suggestionGroups.set(key, suggestion)
+        }
+        const suggestions = [...suggestionGroups.values()]
+        if (suggestions.length > 0) {
+          lines.push(`      ${zh ? '处理建议' : 'Recommended actions'}:`)
+          suggestions.forEach(item => lines.push(`        - ${item}`))
+        }
+        const commands = uniqueStrings(originals
+          .filter(item => item.repair?.kind === 'command')
+          .map(item => item.repair.command.map(quote).join(' ')))
+        if (commands.length > 0) {
+          lines.push(`      ${zh ? '可执行命令' : 'Available commands'}:`)
+          commands.forEach(command => lines.push(`        $ ${command}`))
+        }
+        lines.push('')
+      }
+    }
+
+    if (unknownPackages.length > 0) {
+      lines.push(zh
+        ? `兼容性未确认（${String(unknownPackages.length)} 个插件）`
+        : `Compatibility unknown (${String(unknownPackages.length)} plugin(s))`)
+      for (const plugin of unknownPackages) {
+        lines.push(`[${zh ? '未知' : 'UNKNOWN'}] ${plugin.name}${plugin.version ? ` ${plugin.version}` : ''}`)
+        appendReportField(lines, zh ? '原因' : 'Reason', zh
+          ? '插件没有声明当前 DSH 的兼容范围。'
+          : 'The plugin does not declare a compatibility range for the active DSH.')
+        appendReportField(lines, zh ? '建议' : 'Action', zh
+          ? '升级 DSH 后请关注该插件的发布说明或向插件作者确认。'
+          : 'After a DSH upgrade, review the plugin release notes or ask its author to confirm compatibility.')
+      }
+      lines.push('')
+    }
+
+    const stale = environmentFindings.filter(item => item.code === 'STALE_PROFILE_HARNESS_PACKAGE')
+    const otherEnvironment = environmentFindings.filter(item => item.code !== 'STALE_PROFILE_HARNESS_PACKAGE')
+    if (stale.length > 0 || otherEnvironment.length > 0) {
+      lines.push(zh ? 'DSH 环境问题' : 'DSH environment problems')
+      lines.push('')
+    }
+    if (stale.length > 0) {
+      lines.push(paint('warning', zh
+        ? `[警告] [STALE_PROFILE_HARNESS_PACKAGE ×${String(stale.length)}] 检测到当前 DSH 已不再包含的 profile 残留包。`
+        : `[WARN] [STALE_PROFILE_HARNESS_PACKAGE ×${String(stale.length)}] Profile packages remain that the active DSH no longer includes.`))
+      lines.push(`      ${zh ? '残留包' : 'Stale packages'}:`)
+      for (const original of stale) {
+        const item = localizedFinding(original, language)
+        lines.push(`        - ${item.package ?? (zh ? '未知包' : 'unknown package')}`)
+        if (item.evidence !== undefined) appendReportField(
+          lines, zh ? '位置' : 'Location', item.evidence, '          ',
+        )
+      }
+      const suggestions = uniqueStrings(stale.map(item => localizedFinding(item, language).suggestion))
+      suggestions.forEach(item => appendReportField(lines, zh ? '处理建议' : 'Recommended action', item))
+      lines.push('')
+    }
+    for (const original of otherEnvironment) {
       const item = localizedFinding(original, language)
       const label = zh
         ? item.severity === 'error' ? '错误' : item.severity === 'warning' ? '警告' : '信息'
-        : item.severity === 'error' ? 'ERROR' : item.severity === 'warning' ? 'WARN ' : 'INFO '
+        : item.severity === 'error' ? 'ERROR' : item.severity === 'warning' ? 'WARN' : 'INFO'
       lines.push(paint(item.severity, `${label} [${item.code}] ${item.message}`))
-      if (item.package !== undefined) lines.push(`      ${zh ? '包' : 'Package'}: ${item.package}`)
-      if (item.evidence !== undefined) lines.push(`      ${zh ? '证据' : 'Evidence'}: ${item.evidence}`)
-      if (item.suggestion !== undefined) lines.push(`      ${zh ? '建议' : 'Action'}: ${item.suggestion}`)
-      if (item.repair?.kind === 'command') lines.push(`      ${zh ? '更新命令' : 'Update command'}: ${item.repair.command.map(quote).join(' ')}`)
+      if (item.package !== undefined) appendReportField(lines, zh ? '包' : 'Package', item.package)
+      if (item.evidence !== undefined) appendReportField(lines, zh ? '证据' : 'Evidence', item.evidence)
+      if (item.suggestion !== undefined) appendReportField(lines, zh ? '处理建议' : 'Recommended action', item.suggestion)
+      if (item.repair?.kind === 'command') appendReportField(
+        lines, zh ? '可执行命令' : 'Available command', `$ ${item.repair.command.map(quote).join(' ')}`,
+      )
       lines.push('')
     }
   }
@@ -1365,7 +1509,11 @@ export function formatReport(report, options = {}) {
     ? `汇总：${String(report.summary.errors)} 个错误，${String(report.summary.warnings)} 个警告`
     : `Summary: ${String(report.summary.errors)} error(s), ${String(report.summary.warnings)} warning(s)`)
   if (report.summary.errors > 0) lines.push(zh
-    ? 'Harness 可能无法启动。请优先更新或停用产生错误的插件。'
-    : 'Harness may fail to start. Upgrade or disable the error-producing plugin first.')
+    ? 'DSH 可能无法启动。请优先更新或停用产生错误的插件。'
+    : 'DSH may fail to start. Upgrade or disable the error-producing plugin first.')
+  lines.push('')
+  lines.push(zh
+    ? '本诊断结果由 @bruc3van/dsh-doctor 生成，仅供参考。欢迎在 GitHub Star 或反馈问题：https://github.com/bruc3van/dsh-doctor'
+    : 'This diagnostic report was generated by @bruc3van/dsh-doctor for reference only. Star the project or share feedback on GitHub: https://github.com/bruc3van/dsh-doctor')
   return `${lines.join('\n')}\n`
 }

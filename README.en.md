@@ -2,7 +2,7 @@
 
 [中文](README.md) | English
 
-DSH Doctor diagnoses common DeepSeek Harness failures, including startup errors, damaged configuration, and third-party plugin incompatibility. A normal run is entirely read-only. Repairs run only after you explicitly use `--fix`, inspect the exact file or command plan, and confirm it.
+DSH Doctor helps DSH and plugin users quickly identify plugins that break startup or stop working after a DSH upgrade. It groups each plugin's problems, impact, and recommended actions, while also checking common profile configuration and version-drift issues. Diagnosis is read-only by default; repairs run only after you explicitly use `--fix`, review the exact plan, and confirm it. File edits are backed up first.
 
 This is a community-maintained third-party tool and is not an official DeepSeek project. It does not load or execute code from the plugins it inspects.
 
