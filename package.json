@@ -1,0 +1,22 @@
+{
+  "name": "dsh-doctor",
+  "version": "0.1.0",
+  "description": "Read-only diagnostics for DeepSeek Harness profiles and third-party plugins",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "dsh-doctor": "./src/cli.mjs"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/cli.mjs && node --check src/doctor.mjs && npm test"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  }
+}
