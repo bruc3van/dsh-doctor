@@ -21,6 +21,25 @@ npx @bruc3van/dsh-doctor
 
 默认检查 `$DSH_HOME/profiles/web`；未设置 `DSH_HOME` 时使用 `~/.dsh`。
 
+Doctor 不要求 `dsh` 必须是全局命令。它会按顺序查找 PATH、当前项目安装、profile 共享安装或 npx 缓存留下的链接、已构建的 Harness 源码工作区。DSH Desktop 内置运行时或其他特殊安装可以通过 `--dsh-command /path/to/dsh`（也接受官方包的 `lib/bin.js`）明确指定。找不到 CLI 时仍会完成只读诊断，但不会提供或执行无法验证的命令型修复。
+
+## 输出语言
+
+文本输出支持中文和英文。默认依次读取：
+
+1. `--lang zh|en`
+2. `DSH_DOCTOR_LANG`
+3. 当前 DSH Home 中 `settings.yaml` 的 `locale.preference`
+4. 终端或系统 locale
+
+```sh
+dsh-doctor --lang zh
+dsh-doctor --lang en
+DSH_DOCTOR_LANG=zh dsh-doctor
+```
+
+`--json` 始终保留稳定的英文消息与诊断 code，避免语言变化破坏脚本。
+
 ## 常用命令
 
 ```sh
@@ -28,6 +47,7 @@ npx @bruc3van/dsh-doctor
 dsh-doctor
 dsh-doctor --profile web
 dsh-doctor --home /path/to/.dsh
+dsh-doctor --dsh-command /path/to/@deepseek-ai/dsh/lib/bin.js
 
 # 机器可读的只读报告，不显示提示
 dsh-doctor --json
@@ -60,6 +80,7 @@ dsh-doctor --fix --yes --json
 - 文件修复在确认前展示路径，确认后再次校验 SHA-256 指纹。
 - 写入前创建 `.dsh-doctor-<timestamp>.bak` 备份，再通过同目录临时文件原子替换。
 - 外部命令使用固定 argv 调用，不拼接 shell 命令。
+- 命令修复绑定当前诊断的 `DSH_HOME`，并展示解析出的真实 CLI 路径；不会假定 PATH 中存在 `dsh`。
 - 任一步失败即停止后续修复，并保留已经创建的备份。
 - 完成后重新运行全部诊断，以最终状态决定退出码。
 

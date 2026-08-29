@@ -33,7 +33,7 @@ test('CLI uses exit code 2 for arguments and machine-readable runtime failures',
 test('CLI exposes the package version and repair flags', () => {
   const version = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' })
   assert.equal(version.status, 0)
-  assert.equal(version.stdout, '0.1.0\n')
+  assert.equal(version.stdout, '0.1.1\n')
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' })
   assert.match(help.stdout, /--fix, --repair/)
   assert.match(help.stdout, /--yes/)
@@ -68,7 +68,32 @@ test('CLI refuses an unconfirmed repair in a non-interactive process', () => {
   const profile = join(home, 'profiles', 'web')
   mkdirSync(profile, { recursive: true })
   writeFileSync(join(profile, 'package.json'), `${JSON.stringify({ dependencies: { missing: '1.0.0' } })}\n`)
-  const result = spawnSync(process.execPath, [cli, '--home', home, '--fix'], { encoding: 'utf8' })
+  let result = spawnSync(process.execPath, [cli, '--home', home, '--fix'], { encoding: 'utf8' })
+  assert.equal(result.status, 2)
+  assert.match(result.stderr, /no working DSH CLI/)
+
+  result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--dsh-command', process.execPath], { encoding: 'utf8' })
   assert.equal(result.status, 2)
   assert.match(result.stderr, /interactive terminal or explicit --yes/)
+})
+
+test('CLI follows the DSH locale preference and supports an explicit language', () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-doctor-locale-'))
+  const profile = join(home, 'profiles', 'web')
+  mkdirSync(profile, { recursive: true })
+  writeFileSync(join(home, 'settings.yaml'), 'locale:\n  preference: zh\n')
+  writeFileSync(join(profile, 'package.json'), 'null\n')
+
+  let result = spawnSync(process.execPath, [cli, '--home', home], { encoding: 'utf8' })
+  assert.equal(result.status, 1)
+  assert.match(result.stdout, /输出语言: 中文/)
+  assert.match(result.stdout, /必须包含 JSON 对象/)
+
+  result = spawnSync(process.execPath, [cli, '--home', home, '--lang', 'en'], { encoding: 'utf8' })
+  assert.equal(result.status, 1)
+  assert.match(result.stdout, /Output language: English/)
+  assert.match(result.stdout, /must contain a JSON object/)
+
+  result = spawnSync(process.execPath, [cli, '--home', home, '--lang', 'zh', '--json'], { encoding: 'utf8' })
+  assert.match(JSON.parse(result.stdout).findings[0].message, /must contain a JSON object/)
 })

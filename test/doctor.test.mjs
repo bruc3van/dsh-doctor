@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -78,6 +78,10 @@ test('a healthy profile passes the MVP checks', () => {
 
 test('detects an undeclared legacy client require and removed inject target', () => {
   const subject = fixture()
+  json(join(subject.harness, 'apps', 'cli', 'package.json'), {
+    name: '@deepseek-ai/dsh', version: '1.0.0', bin: { dsh: 'lib/bin.js' },
+  })
+  text(join(subject.harness, 'apps', 'cli', 'lib', 'bin.js'), '#!/usr/bin/env node\n')
   plugin(subject, {
     name: 'fixture-plugin',
     version: '0.1.0',
@@ -97,7 +101,13 @@ test('detects an undeclared legacy client require and removed inject target', ()
     'PROFILE_DEPENDENCY_VERSION_MISMATCH',
   ])
   assert.match(formatReport(report), /Harness may fail to start/)
-  assert.match(formatReport(report), /dsh plugin --profile web remove fixture-plugin/)
+  assert.equal(report.context.dshCli.available, true)
+  const output = formatReport(report)
+  assert.match(output, /Update command:/)
+  assert.match(output, /apps\/cli\/lib\/bin\.js plugin --profile web update fixture-plugin/)
+  assert.doesNotMatch(output, /run dsh/)
+  const update = repairsFromReport(report).find(item => item.id === 'update-package:fixture-plugin')
+  assert.deepEqual(update.env, { DSH_HOME: subject.home })
 })
 
 test('an external cannot be supplied by a stale profile fallback package', () => {
@@ -256,13 +266,68 @@ test('passes command repair arguments literally without a shell', () => {
     command: [
       process.execPath,
       '-e',
-      'require("node:fs").writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)))',
+      'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ args: process.argv.slice(2), home: process.env.DSH_HOME }))',
       output,
       'profile&echo injected',
       '@scope/pkg',
     ],
+    env: { DSH_HOME: join(root, 'isolated-home') },
   }
   assert.match(formatRepairPlan([action]), /profile&echo injected/)
   assert.deepEqual(applyRepairs([action]), [{ id: 'command-argv', status: 'applied' }])
-  assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), ['profile&echo injected', '@scope/pkg'])
+  assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), {
+    args: ['profile&echo injected', '@scope/pkg'],
+    home: join(root, 'isolated-home'),
+  })
+})
+
+test('formats the same report in Chinese without changing stable finding codes', () => {
+  const subject = fixture()
+  json(join(subject.harness, 'packages', 'agent', 'agent', 'package.json'), {
+    name: '@deepseek-ai/dsh-agent', version: '1.0.0',
+  })
+  plugin(subject, {
+    name: 'fixture-plugin', version: '0.1.0',
+    peerDependencies: { '@deepseek-ai/dsh-agent': '0.1.0-rc.7' },
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
+  const output = formatReport(report, { language: 'zh' })
+  assert.match(output, /输出语言: 中文/)
+  assert.match(output, /声明的 Harness peer 版本范围不接受当前已安装版本/)
+  assert.match(output, /汇总：/)
+  assert.equal(report.findings.some(item => item.code === 'HARNESS_PEER_VERSION_MISMATCH'), true)
+})
+
+test('resolves PATH, profile-linked, and explicit DSH CLI installations', () => {
+  const subject = fixture()
+  const binDir = join(subject.root, 'bin')
+  const pathDsh = join(binDir, process.platform === 'win32' ? 'dsh.CMD' : 'dsh')
+  text(pathDsh, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n')
+  chmodSync(pathDsh, 0o755)
+  let report = diagnose({
+    home: subject.home,
+    cwd: subject.root,
+    env: { PATH: binDir, PATHEXT: '.CMD' },
+  })
+  assert.equal(report.context.dshCli.source, 'path')
+  assert.deepEqual(report.context.dshCli.command, [pathDsh])
+
+  const shared = join(subject.home, 'profiles', 'node_modules', '@deepseek-ai', 'dsh')
+  json(join(shared, 'package.json'), {
+    name: '@deepseek-ai/dsh', version: '2.0.0', bin: { dsh: 'lib/bin.js' },
+  })
+  text(join(shared, 'lib', 'bin.js'), '#!/usr/bin/env node\n')
+  report = diagnose({ home: subject.home, cwd: subject.root, env: { PATH: '' } })
+  assert.equal(report.context.dshCli.source, 'profile')
+  assert.equal(report.context.dshCli.version, '2.0.0')
+  assert.deepEqual(report.context.dshCli.command, [process.execPath, join(realpathSync(shared), 'lib', 'bin.js')])
+
+  report = diagnose({
+    home: subject.home,
+    cwd: subject.root,
+    env: { PATH: '' },
+    dshCommand: join(shared, 'lib', 'bin.js'),
+  })
+  assert.equal(report.context.dshCli.source, 'explicit')
 })

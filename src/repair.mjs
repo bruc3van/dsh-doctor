@@ -22,15 +22,27 @@ export function repairsFromReport(report) {
   })
 }
 
-export function formatRepairPlan(actions) {
-  const lines = ['Proposed repairs:', '']
+export function formatRepairPlan(actions, options = {}) {
+  const zh = options.language === 'zh'
+  const lines = [zh ? '建议执行以下修复：' : 'Proposed repairs:', '']
   actions.forEach((action, index) => {
-    lines.push(`${String(index + 1)}. [${action.risk.toUpperCase()}] ${action.description}`)
-    if (action.kind === 'command') lines.push(`   Command: ${action.command.map(quoteArgument).join(' ')}`)
-    else lines.push(`   File: ${action.file}`, `   Backup: ${action.file}.dsh-doctor-<timestamp>.bak`)
+    const risk = zh ? action.risk === 'low' ? '低风险' : action.risk === 'medium' ? '中风险' : '高风险' : action.risk.toUpperCase()
+    lines.push(`${String(index + 1)}. [${risk}] ${localizedDescription(action, zh)}`)
+    if (action.kind === 'command') {
+      lines.push(`   ${zh ? '命令' : 'Command'}: ${action.command.map(quoteArgument).join(' ')}`)
+      if (action.env !== undefined) lines.push(`   ${zh ? '环境' : 'Environment'}: ${Object.entries(action.env).map(([key, value]) => `${key}=${quoteArgument(value)}`).join(' ')}`)
+    } else lines.push(`   ${zh ? '文件' : 'File'}: ${action.file}`, `   ${zh ? '备份' : 'Backup'}: ${action.file}.dsh-doctor-<timestamp>.bak`)
     lines.push('')
   })
-  return `${lines.join('\n')}Apply these repairs? [y/N] `
+  return `${lines.join('\n')}${zh ? '执行这些修复吗？[y/N] ' : 'Apply these repairs? [y/N] '}`
+}
+
+function localizedDescription(action, zh) {
+  if (!zh) return action.description
+  if (action.id.startsWith('update-package:')) return `更新 profile ${action.profile} 中的 ${action.package}。`
+  if (action.id.startsWith('install-profile:')) return `安装 profile ${action.profile} 声明的依赖。`
+  if (action.id.startsWith('activate-bundle:')) return `把 ${action.operation.name} 加入 dsh.profile.bundles。`
+  return action.description
 }
 
 function quoteArgument(value) {
@@ -58,7 +70,10 @@ function applyJsonEdit(action) {
 
 function applyCommand(action) {
   const [command, ...args] = action.command
-  const result = crossSpawn.sync(command, args, { stdio: 'inherit' })
+  const result = crossSpawn.sync(command, args, {
+    stdio: 'inherit',
+    env: action.env === undefined ? process.env : { ...process.env, ...action.env },
+  })
   if (result.error != null) throw result.error
   if (result.status !== 0) throw new Error(`${command} exited with status ${String(result.status)}`)
   return { id: action.id, status: 'applied' }

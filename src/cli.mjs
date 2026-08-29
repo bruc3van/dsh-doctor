@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
-import { formatReport, diagnose } from './doctor.mjs'
+import { defaultDshHome, formatReport, diagnose } from './doctor.mjs'
 import { applyRepairs, formatRepairPlan, repairsFromReport } from './repair.mjs'
+import { resolveLanguage } from './i18n.mjs'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createInterface } from 'node:readline/promises'
 
-const HELP = `Usage: dsh-doctor [options]
+const HELP_EN = `Usage: dsh-doctor [options]
 
 Diagnostics and confirmed recovery for a DeepSeek Harness profile.
 
@@ -15,6 +16,8 @@ Options:
   --profile <name>       profile to inspect (default: web)
   --home <path>          Harness home (default: $DSH_HOME or ~/.dsh)
   --harness-root <path>  active DeepSeek Harness source checkout
+  --dsh-command <path>   DSH executable or lib/bin.js used for command repairs
+  --lang <auto|zh|en>    output language (default: DSH setting, then system)
   --json                 print machine-readable JSON
   --fix, --repair        preview and apply available repairs after confirmation
   --yes                  confirm the displayed repair plan non-interactively
@@ -22,8 +25,27 @@ Options:
   -v, --version          show version
 `
 
-function fail(message) {
-  process.stderr.write(`dsh-doctor: ${message}\n\n${HELP}`)
+const HELP_ZH = `用法：dsh-doctor [选项]
+
+诊断 DeepSeek Harness profile，并在用户确认后实施修复。
+
+选项：
+  --profile <名称>       要检查的 profile（默认：web）
+  --home <路径>          Harness 主目录（默认：$DSH_HOME 或 ~/.dsh）
+  --harness-root <路径>  当前 DeepSeek Harness 源码工作区
+  --dsh-command <路径>   命令修复使用的 DSH 可执行文件或 lib/bin.js
+  --lang <auto|zh|en>    输出语言（默认：DSH 设置，其次系统语言）
+  --json                 输出稳定的机器可读 JSON
+  --fix, --repair        展示修复计划，确认后实施
+  --yes                  在非交互环境中确认当前修复计划
+  -h, --help             显示帮助
+  -v, --version          显示版本
+`
+
+const help = language => language === 'zh' ? HELP_ZH : HELP_EN
+
+function fail(message, language = 'en') {
+  process.stderr.write(`dsh-doctor: ${message}\n\n${help(language)}`)
   process.exitCode = 2
 }
 
@@ -40,6 +62,8 @@ function parse(args) {
     if (arg === '--profile') options.profile = valueAfter(args, index++, arg)
     else if (arg === '--home') options.home = valueAfter(args, index++, arg)
     else if (arg === '--harness-root') options.harnessRoot = valueAfter(args, index++, arg)
+    else if (arg === '--dsh-command') options.dshCommand = valueAfter(args, index++, arg)
+    else if (arg === '--lang') options.lang = valueAfter(args, index++, arg)
     else if (arg === '--json') options.json = true
     else if (arg === '--fix' || arg === '--repair') options.fix = true
     else if (arg === '--yes') options.yes = true
@@ -58,10 +82,15 @@ async function main() {
     fail(error instanceof Error ? error.message : String(error))
     return
   }
+  const language = resolveLanguage({
+    requested: options.lang,
+    home: resolve(options.home ?? defaultDshHome()),
+    systemLocale: Intl.DateTimeFormat().resolvedOptions().locale,
+  })
   if (options.yes && !options.fix) throw new Error('--yes requires --fix')
   if (options.json && options.fix && !options.yes) throw new Error('--json --fix requires --yes because a prompt would corrupt JSON output')
   if (options.help) {
-    process.stdout.write(HELP)
+    process.stdout.write(help(language))
   } else if (options.version) {
     const here = dirname(fileURLToPath(import.meta.url))
     const manifest = JSON.parse(readFileSync(resolve(here, '..', 'package.json'), 'utf8'))
@@ -71,15 +100,20 @@ async function main() {
     let repairs = []
     if (options.fix) {
       const actions = repairsFromReport(report)
+      if (actions.length === 0 && report.context.dshCli?.commandRepairNeeded && !report.context.dshCli.available) {
+        throw new Error(language === 'zh'
+          ? '未找到可用的 DSH CLI，无法执行命令型修复；请使用 --dsh-command 指定当前安装的 dsh 或 lib/bin.js'
+          : 'no working DSH CLI was found; pass the active dsh executable or lib/bin.js with --dsh-command')
+      }
       if (actions.length > 0) {
         let confirmed = options.yes === true
         if (!confirmed) {
           if (!process.stdin.isTTY) throw new Error('--fix needs an interactive terminal or explicit --yes')
-          const prompt = formatRepairPlan(actions)
+          const prompt = formatRepairPlan(actions, { language })
           const reader = createInterface({ input: process.stdin, output: process.stderr })
           const answer = await reader.question(prompt)
           reader.close()
-          confirmed = /^y(?:es)?$/i.test(answer.trim())
+          confirmed = /^(?:y(?:es)?|是|确认)$/i.test(answer.trim())
         }
         if (confirmed) {
           repairs = applyRepairs(actions)
@@ -90,7 +124,7 @@ async function main() {
     const output = options.fix ? { ...report, repairs } : report
     process.stdout.write(options.json
       ? `${JSON.stringify(output, null, 2)}\n`
-      : `${formatReport(report, { color: process.stdout.isTTY })}${repairs.length > 0 ? `Repairs: ${JSON.stringify(repairs, null, 2)}\n` : ''}`)
+      : `${formatReport(report, { color: process.stdout.isTTY, language })}${repairs.length > 0 ? `${language === 'zh' ? '修复结果' : 'Repairs'}: ${JSON.stringify(repairs, null, 2)}\n` : ''}`)
     process.exitCode = repairs.some(item => item.status === 'failed') ? 2 : report.summary.errors > 0 ? 1 : 0
   }
 }

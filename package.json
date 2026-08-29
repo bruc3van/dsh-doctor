@@ -1,6 +1,6 @@
 {
   "name": "@bruc3van/dsh-doctor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Diagnostics and confirmed recovery for DeepSeek Harness profiles and third-party plugins",
   "license": "MIT",
   "type": "module",
@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/cli.mjs && node --check src/doctor.mjs && node --check src/repair.mjs && npm test",
+    "check": "node --check src/cli.mjs && node --check src/doctor.mjs && node --check src/i18n.mjs && node --check src/repair.mjs && npm test",
     "prepublishOnly": "npm run check"
   },
   "dependencies": {
