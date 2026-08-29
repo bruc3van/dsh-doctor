@@ -137,4 +137,6 @@ npm run check
 node src/cli.mjs --help
 ```
 
-新包需要先由 `@bruc3van` 对应的 npm 账号完成一次 `npm publish --access public`，创建公开包页面。然后在 npm 包设置中添加 GitHub Actions Trusted Publisher：Organization or user 为 `bruc3van`，Repository 为 `dsh-doctor`，Workflow filename 为 `release.yml`，Environment 留空，Allowed actions 只启用 `npm publish`。后续推送与 `package.json` 版本一致的 `vX.Y.Z` tag，workflow 会通过 OIDC 发布并由 npm 自动生成 provenance，不需要保存长期 npm token。
+新包需要先由 `@bruc3van` 对应的 npm 账号完成一次 `npm publish --access public`，创建公开包页面。然后在 npm 包设置中添加 GitHub Actions Trusted Publisher：Organization or user 为 `bruc3van`，Repository 为 `dsh-doctor`，Workflow filename 为 `release.yml`，Environment 留空，Allowed actions 只启用 `npm publish`。
+
+后续发布前，需要在 `CHANGELOG.md` 中增加与版本 tag 同名的中文 `## vX.Y.Z` 条目。推送与 `package.json` 版本一致的 tag 后，workflow 会通过 OIDC 发布 npm 包、生成 provenance，并自动用该中文条目创建或更新 GitHub Release；缺少中文条目时发布流程会失败。不需要保存长期 npm token。

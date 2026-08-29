@@ -47,3 +47,30 @@ jobs:
       - name: Publish to npm
         if: steps.registry.outputs.published != 'true'
         run: npm publish --access public
+
+  release:
+    needs: npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Generate Chinese release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/release-notes.mjs "$TAG" > release-notes.md
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          title="DSH Doctor $TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --latest --title "$title" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --verify-tag --latest --title "$title" --notes-file release-notes.md
+          fi

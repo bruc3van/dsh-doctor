@@ -137,4 +137,6 @@ npm run check
 node src/cli.mjs --help
 ```
 
-The first publication of a new package must be performed by the npm account that owns the `@bruc3van` scope with `npm publish --access public`. Then configure a GitHub Actions Trusted Publisher in the npm package settings with Organization or user `bruc3van`, Repository `dsh-doctor`, Workflow filename `release.yml`, no Environment, and only the `npm publish` allowed action. Later releases are triggered by pushing a `vX.Y.Z` tag matching `package.json`; the workflow publishes through OIDC with npm provenance and requires no long-lived npm token.
+The first publication of a new package must be performed by the npm account that owns the `@bruc3van` scope with `npm publish --access public`. Then configure a GitHub Actions Trusted Publisher in the npm package settings with Organization or user `bruc3van`, Repository `dsh-doctor`, Workflow filename `release.yml`, no Environment, and only the `npm publish` allowed action.
+
+Before each later release, add a Chinese `## vX.Y.Z` entry matching the version tag to `CHANGELOG.md`. Pushing a tag that matches `package.json` makes the workflow publish through OIDC with npm provenance and automatically create or update the GitHub Release from that Chinese entry. The release fails if the entry is missing or contains no Chinese text. No long-lived npm token is required.
