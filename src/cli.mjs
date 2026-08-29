@@ -107,11 +107,13 @@ async function main() {
       }
       if (actions.length > 0) {
         let confirmed = options.yes === true
-        if (!confirmed) {
+        const plan = formatRepairPlan(actions, { language, prompt: !confirmed })
+        if (confirmed) {
+          process.stderr.write(`${plan}\n`)
+        } else {
           if (!process.stdin.isTTY) throw new Error('--fix needs an interactive terminal or explicit --yes')
-          const prompt = formatRepairPlan(actions, { language })
           const reader = createInterface({ input: process.stdin, output: process.stderr })
-          const answer = await reader.question(prompt)
+          const answer = await reader.question(plan)
           reader.close()
           confirmed = /^(?:y(?:es)?|是|确认)$/i.test(answer.trim())
         }

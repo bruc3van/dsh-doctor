@@ -34,7 +34,10 @@ export function formatRepairPlan(actions, options = {}) {
     } else lines.push(`   ${zh ? '文件' : 'File'}: ${action.file}`, `   ${zh ? '备份' : 'Backup'}: ${action.file}.dsh-doctor-<timestamp>.bak`)
     lines.push('')
   })
-  return `${lines.join('\n')}${zh ? '执行这些修复吗？[y/N] ' : 'Apply these repairs? [y/N] '}`
+  const plan = lines.join('\n')
+  return options.prompt === false
+    ? plan.trimEnd()
+    : `${plan}${zh ? '执行这些修复吗？[y/N] ' : 'Apply these repairs? [y/N] '}`
 }
 
 function localizedDescription(action, zh) {
@@ -56,8 +59,19 @@ function applyJsonEdit(action) {
   }
   const manifest = JSON.parse(current)
   if (action.operation.type !== 'add-bundle') throw new Error(`unsupported JSON repair ${action.operation.type}`)
-  const bundles = manifest?.dsh?.profile?.bundles
-  if (!Array.isArray(bundles)) throw new Error(`${action.file} no longer has a valid dsh.profile.bundles array`)
+  if (manifest.dsh === undefined) manifest.dsh = {}
+  if (manifest.dsh === null || typeof manifest.dsh !== 'object' || Array.isArray(manifest.dsh)) {
+    throw new Error(`${action.file} no longer has a valid dsh object`)
+  }
+  if (manifest.dsh.profile === undefined) manifest.dsh.profile = {}
+  if (manifest.dsh.profile === null || typeof manifest.dsh.profile !== 'object' || Array.isArray(manifest.dsh.profile)) {
+    throw new Error(`${action.file} no longer has a valid dsh.profile object`)
+  }
+  if (manifest.dsh.profile.bundles === undefined) manifest.dsh.profile.bundles = []
+  const bundles = manifest.dsh.profile.bundles
+  if (!Array.isArray(bundles) || !bundles.every(item => typeof item === 'string')) {
+    throw new Error(`${action.file} no longer has a valid dsh.profile.bundles array`)
+  }
   if (!bundles.includes(action.operation.name)) bundles.push(action.operation.name)
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const backup = `${action.file}.dsh-doctor-${stamp}.bak`
@@ -75,7 +89,11 @@ function applyCommand(action) {
     env: action.env === undefined ? process.env : { ...process.env, ...action.env },
   })
   if (result.error != null) throw result.error
-  if (result.status !== 0) throw new Error(`${command} exited with status ${String(result.status)}`)
+  if (result.status !== 0) {
+    throw new Error(result.signal === null
+      ? `${command} exited with status ${String(result.status)}`
+      : `${command} was terminated by signal ${result.signal}`)
+  }
   return { id: action.id, status: 'applied' }
 }
 

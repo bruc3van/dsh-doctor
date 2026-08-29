@@ -1,4 +1,5 @@
 import { accessSync, constants, existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { builtinModules } from 'node:module'
 import { homedir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import yaml from 'js-yaml'
@@ -16,6 +17,7 @@ export const PLATFORM_MODULES = new Set([
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
 ])
+const BUILTIN_MODULES = new Set(builtinModules.map(name => name.replace(/^node:/, '')))
 
 const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 }
 const JS_EXPRESSION = new yaml.Type('tag:yaml.org,2002:js', {
@@ -71,6 +73,7 @@ function readJson(file, subject, findings) {
 }
 
 function packagePathParts(name) {
+  if (typeof name !== 'string') return undefined
   if (name.startsWith('@')) {
     const parts = name.split('/')
     return parts.length === 2
@@ -94,7 +97,7 @@ function packageManifestAt(directory, expectedName, findings, source) {
       suggestion: 'Reinstall the dependency so its directory and package name agree.',
     }))
   }
-  return { directory, file, manifest }
+  return { directory, file, manifest, requestedName: expectedName }
 }
 
 function findHarnessRoot(start) {
@@ -113,6 +116,14 @@ function executable(file) {
   try {
     accessSync(file, process.platform === 'win32' ? constants.F_OK : constants.X_OK)
     return true
+  } catch {
+    return false
+  }
+}
+
+function regularFile(file) {
+  try {
+    return statSync(file).isFile()
   } catch {
     return false
   }
@@ -168,10 +179,10 @@ function commandFromValue(value, env, cwd) {
       : value
   const looksLikePath = isAbsolute(expanded) || expanded.includes('/') || expanded.includes('\\') || expanded.startsWith('.')
   const file = looksLikePath ? resolve(cwd, expanded) : executableOnPath(expanded, env)
-  if (file === undefined || !existsSync(file)) return undefined
-  return /\.(?:c?js|mjs)$/i.test(file)
-    ? { command: [process.execPath, file], path: file }
-    : { command: [file], path: file }
+  if (file === undefined) return undefined
+  if (!regularFile(file)) return undefined
+  if (/\.(?:c?js|mjs)$/i.test(file)) return { command: [process.execPath, file], path: file }
+  return executable(file) ? { command: [file], path: file } : undefined
 }
 
 function resolveDshCli(options, harness, home) {
@@ -242,7 +253,14 @@ function indexWorkspace(root, findings) {
   for (const directory of workspacePackageDirectories(root)) {
     const file = join(directory, 'package.json')
     if (!existsSync(file)) continue
-    const manifest = readJson(file, 'Harness workspace package manifest', findings)
+    const manifestFindings = []
+    const manifest = readJson(file, 'Harness workspace package manifest', manifestFindings)
+    for (const item of manifestFindings) {
+      findings.push(finding('warning', 'INVALID_WORKSPACE_MANIFEST', 'A Harness workspace package manifest was ignored because it is invalid.', {
+        evidence: item.evidence ?? file,
+        suggestion: 'Repair this workspace package manifest to include it in compatibility checks.',
+      }))
+    }
     if (typeof manifest?.name === 'string') packages.set(manifest.name, { directory, file, manifest })
   }
   return packages
@@ -256,10 +274,10 @@ function resolveHarnessContext(home, explicitRoot, findings) {
         evidence: root,
         suggestion: 'Pass the DeepSeek Harness repository root to --harness-root.',
       }))
-      return { root, packages: new Map(), version: undefined, authoritative: true }
+      return { root, packages: new Map(), version: undefined, authoritative: false }
     }
     const manifest = readJson(join(root, 'package.json'), 'Harness root manifest', findings)
-    return { root, packages: indexWorkspace(root, findings), version: manifest?.version, authoritative: true }
+    return { root, packages: indexWorkspace(root, findings), version: manifest?.version, authoritative: manifest !== undefined }
   }
 
   const sharedDsh = join(home, 'profiles', 'node_modules', '@deepseek-ai', 'dsh')
@@ -301,8 +319,9 @@ function packageResolver(profileDir, home, harnessPackages, findings) {
       return resolved
     }
     const workspace = harnessPackages.get(name)
-    cache.set(name, workspace)
-    return workspace
+    const resolved = workspace === undefined ? undefined : { ...workspace, requestedName: name }
+    cache.set(name, resolved)
+    return resolved
   }
 }
 
@@ -346,6 +365,7 @@ function dependencyEntries(value, field, file, findings) {
 }
 
 function updateRepair(profile, name, commandRepair) {
+  if (packagePathParts(name) === undefined) return undefined
   return commandRepair(
     `update-package:${name}`,
     `Update ${name} in profile ${profile}.`,
@@ -365,11 +385,11 @@ function safePackageFile(packageDir, exported) {
 export function extractStaticRequires(source) {
   const values = new Set()
   const code = codePositions(source)
-  const pattern = /\brequire\s*\(\s*(['"])([^'"\\\r\n]+)\1\s*\)/g
+  const pattern = /(?<![\w$.])require\s*\(\s*(['"])([^'"\\\r\n]+)\1\s*\)/g
   for (const match of source.matchAll(pattern)) {
     if (!code[match.index]) continue
     const specifier = match[2]
-    if (specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('node:')) continue
+    if (specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('node:') || BUILTIN_MODULES.has(specifier)) continue
     if (packagePathParts(specifier) !== undefined || specifier.startsWith('@')) values.add(specifier)
   }
   return [...values].sort()
@@ -424,7 +444,7 @@ function inspectClientPackage(record, context) {
   const {
     commandRepair, findings, harnessPackages, harnessPackagesAuthoritative, profile, resolvePackage,
   } = context
-  const name = record.manifest.name
+  const name = record.requestedName ?? record.manifest.name
   const disableSuggestion = `Upgrade ${name}; if no compatible release exists, remove it through the same DSH installation.`
   const declaration = record.manifest?.dsh?.client
   if (declaration === undefined) return
@@ -486,7 +506,7 @@ function inspectClientPackage(record, context) {
     return
   }
   const file = safePackageFile(record.directory, exported)
-  if (file === undefined || !existsSync(file) || !statSync(file).isFile()) {
+  if (file === undefined || !regularFile(file)) {
     findings.push(finding('error', 'CLIENT_BUNDLE_MISSING', `${name} client bundle is missing.`, {
       package: name,
       evidence: file ?? `${record.file}: exports["./client"] = ${JSON.stringify(exported)}`,
@@ -587,7 +607,7 @@ function inspectBundle(name, record, findings) {
     return
   }
   const file = safePackageFile(record.directory, patch)
-  if (file === undefined || !existsSync(file) || !statSync(file).isFile()) {
+  if (file === undefined || !regularFile(file)) {
     findings.push(finding('error', 'BUNDLE_PATCH_MISSING', `${name} bundle patch is missing.`, {
       package: name,
       evidence: file ?? `${record.file}: dsh.bundle.patch = ${JSON.stringify(patch)}`,
@@ -699,18 +719,19 @@ function inspectCompatibility(record, context) {
     mismatches.push(`${name} ${range} (active ${version})`)
   }
   if (mismatches.length > 0) {
-    findings.push(finding('warning', 'HARNESS_PEER_VERSION_MISMATCH', `${record.manifest.name} has Harness peer ranges that do not accept the active versions.`, {
-      package: record.manifest.name,
+    const name = record.requestedName ?? record.manifest.name
+    findings.push(finding('warning', 'HARNESS_PEER_VERSION_MISMATCH', `${name} has Harness peer ranges that do not accept the active versions.`, {
+      package: name,
       evidence: mismatches.join(', '),
-      suggestion: `Update ${record.manifest.name} to a release compatible with the active Harness.`,
-      repair: updateRepair(profile, record.manifest.name, commandRepair),
+      suggestion: `Update ${name} to a release compatible with the active Harness.`,
+      repair: updateRepair(profile, name, commandRepair),
     }))
   }
 }
 
 export function defaultDshHome(env = process.env) {
-  const configured = env.DSH_HOME
-  if (configured !== undefined && configured.trim().length > 0) {
+  const configured = env.DSH_HOME?.trim()
+  if (configured !== undefined && configured.length > 0) {
     if (configured === '~') return homedir()
     if (configured.startsWith('~/') || configured.startsWith('~\\')) return resolve(homedir(), configured.slice(2))
     return resolve(configured)
@@ -759,15 +780,32 @@ export function diagnose(options = {}) {
   const resolveBundle = bundleResolver(profileDir, home, harness.packages, findings)
   const dependencyEntriesList = dependencyEntries(profileManifest.dependencies, 'dependencies', profileManifestFile, findings)
   const dependencyNames = dependencyEntriesList.map(([name]) => name)
-  const bundles = profileManifest?.dsh?.profile?.bundles
+  const dshConfig = profileManifest.dsh
+  const dshConfigValid = dshConfig === undefined || objectRecord(dshConfig) !== undefined
+  if (!dshConfigValid) {
+    findings.push(finding('error', 'INVALID_DSH_CONFIGURATION', 'dsh must be an object when present.', {
+      evidence: profileManifestFile,
+      suggestion: 'Repair the dsh configuration object before starting Harness.',
+    }))
+  }
+  const profileConfigValue = objectRecord(dshConfig)?.profile
+  const profileConfigValid = profileConfigValue === undefined || objectRecord(profileConfigValue) !== undefined
+  if (dshConfigValid && !profileConfigValid) {
+    findings.push(finding('error', 'INVALID_PROFILE_CONFIGURATION', 'dsh.profile must be an object when present.', {
+      evidence: profileManifestFile,
+      suggestion: 'Repair the dsh.profile configuration object before starting Harness.',
+    }))
+  }
+  const profileConfig = objectRecord(profileConfigValue)
+  const bundles = profileConfig?.bundles
   if (bundles !== undefined && (!Array.isArray(bundles) || !bundles.every(item => typeof item === 'string'))) {
     findings.push(finding('error', 'INVALID_BUNDLE_LIST', 'dsh.profile.bundles must be a string array.', {
       evidence: profileManifestFile,
       suggestion: 'Repair the profile manifest before starting Harness.',
     }))
   }
-  const bundleNames = Array.isArray(bundles) ? bundles.filter(item => typeof item === 'string') : []
-  const patchReload = profileManifest?.dsh?.profile?.patchReload
+  const bundleNames = Array.isArray(bundles) ? [...new Set(bundles.filter(item => typeof item === 'string'))] : []
+  const patchReload = profileConfig?.patchReload
   if (patchReload !== undefined && patchReload !== 'live' && patchReload !== 'startup') {
     findings.push(finding('error', 'INVALID_PATCH_RELOAD', 'dsh.profile.patchReload must be "live" or "startup".', {
       evidence: profileManifestFile,
@@ -818,7 +856,8 @@ export function diagnose(options = {}) {
         ),
       }))
     }
-    if (record.manifest?.dsh?.bundle?.patch !== undefined && !bundleNames.includes(name)) {
+    if (dshConfigValid && profileConfigValid
+      && record.manifest?.dsh?.bundle?.patch !== undefined && !bundleNames.includes(name)) {
       findings.push(finding('warning', 'INSTALLED_BUNDLE_INACTIVE', `${name} is installed as a bundle but is absent from dsh.profile.bundles.`, {
         package: name,
         evidence: profileManifestFile,
@@ -871,7 +910,7 @@ export function diagnose(options = {}) {
       ? { available: false, commandRepairNeeded }
       : { available: true, commandRepairNeeded, ...dshCli },
     packages: thirdPartyRecords.map(record => ({
-      name: record.manifest.name,
+      name: record.requestedName ?? record.manifest.name,
       version: record.manifest.version,
       directory: record.directory,
       client: record.manifest?.dsh?.client !== undefined,

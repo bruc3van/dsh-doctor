@@ -61,6 +61,8 @@ test('CLI applies a confirmed repair, creates a backup, and re-diagnoses', () =>
   const manifest = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8'))
   assert.deepEqual(manifest.dsh.profile.bundles, ['fixture-plugin'])
   assert.equal(readdirSync(profile).filter(name => name.endsWith('.bak')).length, 1)
+  assert.match(result.stderr, /Proposed repairs:/)
+  assert.doesNotMatch(result.stderr, /Apply these repairs\?/)
 })
 
 test('CLI refuses an unconfirmed repair in a non-interactive process', () => {
@@ -68,11 +70,12 @@ test('CLI refuses an unconfirmed repair in a non-interactive process', () => {
   const profile = join(home, 'profiles', 'web')
   mkdirSync(profile, { recursive: true })
   writeFileSync(join(profile, 'package.json'), `${JSON.stringify({ dependencies: { missing: '1.0.0' } })}\n`)
-  let result = spawnSync(process.execPath, [cli, '--home', home, '--fix'], { encoding: 'utf8' })
+  const isolatedEnv = { ...process.env, PATH: '', Path: '' }
+  let result = spawnSync(process.execPath, [cli, '--home', home, '--fix'], { encoding: 'utf8', env: isolatedEnv })
   assert.equal(result.status, 2)
   assert.match(result.stderr, /no working DSH CLI/)
 
-  result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--dsh-command', process.execPath], { encoding: 'utf8' })
+  result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--dsh-command', process.execPath], { encoding: 'utf8', env: isolatedEnv })
   assert.equal(result.status, 2)
   assert.match(result.stderr, /interactive terminal or explicit --yes/)
 })

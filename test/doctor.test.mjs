@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFil
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { diagnose, extractStaticRequires, formatReport } from '../src/doctor.mjs'
+import { defaultDshHome, diagnose, extractStaticRequires, formatReport } from '../src/doctor.mjs'
 import { applyRepairs, formatRepairPlan, repairsFromReport } from '../src/repair.mjs'
 
 function json(file, value) {
@@ -56,6 +56,15 @@ test('extractStaticRequires ignores comments and string contents', () => {
   assert.deepEqual(extractStaticRequires(`
     /* require("commented") */
     const sample = "require('in-a-string')"
+    require('real-package')
+  `), ['real-package'])
+})
+
+test('extractStaticRequires ignores Node built-ins and member methods', () => {
+  assert.deepEqual(extractStaticRequires(`
+    require('path')
+    require('node:fs')
+    loader.require('not-a-static-require')
     require('real-package')
   `), ['real-package'])
 })
@@ -234,11 +243,42 @@ test('uses the Harness installation before a profile-local bundle with the same 
   assert.equal(report.findings.some(item => item.code === 'BUNDLE_DECLARATION_MISSING'), false)
 })
 
+test('does not cascade supplier errors from an invalid explicit Harness root', () => {
+  const subject = fixture()
+  plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0',
+    exports: { './client': './lib/client.js' },
+    dsh: {
+      bundle: { patch: './cordis.patch.yml' },
+      client: { platform: 'web', external: ['client-supplier/client'] },
+    },
+  }, 'module.exports = require("client-supplier/client")\n')
+  json(join(subject.home, 'profiles', 'node_modules', 'client-supplier', 'package.json'), {
+    name: 'client-supplier', version: '1.0.0', dsh: { client: { platform: 'web' } },
+  })
+
+  const report = diagnose({ home: subject.home, harnessRoot: join(subject.root, 'not-a-harness') })
+  assert.deepEqual(report.findings.map(item => item.code), ['INVALID_HARNESS_ROOT'])
+})
+
+test('warns without failing when an unrelated workspace manifest is invalid', () => {
+  const subject = fixture()
+  plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  text(join(subject.harness, 'packages', 'unrelated', 'package.json'), 'not json\n')
+
+  const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
+  assert.equal(report.ok, true)
+  assert.deepEqual(report.findings.map(item => [item.code, item.severity]), [
+    ['INVALID_WORKSPACE_MANIFEST', 'warning'],
+  ])
+})
+
 test('applies a confirmed JSON repair with a backup and rejects stale previews', () => {
   const subject = fixture()
   json(join(subject.profile, 'package.json'), {
     dependencies: { 'fixture-plugin': '1.0.0' },
-    dsh: { profile: { bundles: [] } },
   })
   plugin(subject, {
     name: 'fixture-plugin', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
@@ -249,6 +289,7 @@ test('applies a confirmed JSON repair with a backup and rejects stale previews',
   const results = applyRepairs(actions)
   assert.equal(results[0].status, 'applied')
   assert.ok(results[0].backup)
+  assert.deepEqual(JSON.parse(readFileSync(join(subject.profile, 'package.json'), 'utf8')).dsh.profile.bundles, ['fixture-plugin'])
   report = diagnose({ home: subject.home, harnessRoot: subject.harness })
   assert.equal(report.findings.some(item => item.code === 'INSTALLED_BUNDLE_INACTIVE'), false)
 
@@ -258,6 +299,48 @@ test('applies a confirmed JSON repair with a backup and rejects stale previews',
   const stale = repairsFromReport(diagnose({ home: subject.home, harnessRoot: subject.harness }))
   text(join(subject.profile, 'package.json'), `${readFileSync(join(subject.profile, 'package.json'), 'utf8')} `)
   assert.equal(applyRepairs(stale)[0].status, 'failed')
+})
+
+test('does not offer a bundle edit that would overwrite malformed profile configuration', () => {
+  for (const dsh of ['invalid', { profile: [] }]) {
+    const subject = fixture()
+    json(join(subject.profile, 'package.json'), {
+      dependencies: { 'fixture-plugin': '1.0.0' }, dsh,
+    })
+    plugin(subject, {
+      name: 'fixture-plugin', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })
+
+    const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
+    assert.equal(repairsFromReport(report).some(item => item.id.startsWith('activate-bundle:')), false)
+    assert.equal(report.findings.some(item => item.code === 'INVALID_DSH_CONFIGURATION'
+      || item.code === 'INVALID_PROFILE_CONFIGURATION'), true)
+  }
+})
+
+test('uses the declared dependency name for command repairs after a manifest name mismatch', () => {
+  const subject = fixture()
+  json(join(subject.harness, 'apps', 'cli', 'package.json'), {
+    name: '@deepseek-ai/dsh', version: '1.0.0', bin: { dsh: 'lib/bin.js' },
+  })
+  text(join(subject.harness, 'apps', 'cli', 'lib', 'bin.js'), '#!/usr/bin/env node\n')
+  plugin(subject, {
+    name: '--danger', version: '1.0.0', dsh: { client: 'invalid' },
+  })
+  const source = join(subject.profile, 'node_modules', '--danger')
+  const target = join(subject.profile, 'node_modules', 'fixture-plugin')
+  mkdirSync(target, { recursive: true })
+  writeFileSync(join(target, 'package.json'), readFileSync(join(source, 'package.json')))
+
+  const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
+  const update = repairsFromReport(report).find(item => item.id === 'update-package:fixture-plugin')
+  assert.ok(update)
+  assert.deepEqual(update.command.slice(-2), ['update', 'fixture-plugin'])
+  assert.equal(update.command.includes('--danger'), false)
+})
+
+test('trims DSH_HOME before resolving it', () => {
+  assert.equal(defaultDshHome({ DSH_HOME: '  ./fixture-home  ' }), join(process.cwd(), 'fixture-home'))
 })
 
 test('passes command repair arguments literally without a shell', () => {
