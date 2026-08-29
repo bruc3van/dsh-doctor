@@ -33,7 +33,7 @@ test('CLI uses exit code 2 for arguments and machine-readable runtime failures',
 test('CLI exposes the package version and repair flags', () => {
   const version = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' })
   assert.equal(version.status, 0)
-  assert.equal(version.stdout, '0.1.1\n')
+  assert.equal(version.stdout, '0.1.2\n')
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' })
   assert.match(help.stdout, /--fix, --repair/)
   assert.match(help.stdout, /--yes/)
