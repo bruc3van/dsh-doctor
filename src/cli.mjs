@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { defaultDshHome, formatReport, diagnose } from './doctor.mjs'
-import { applyRepairs, formatRepairPlan, repairsFromReport } from './repair.mjs'
+import { formatReport, diagnose, resolveDshHome } from './doctor.mjs'
+import { applyRepairs, formatRepairOutcome, formatRepairPlan, repairsFromReport } from './repair.mjs'
 import { resolveLanguage } from './i18n.mjs'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -44,11 +44,6 @@ const HELP_ZH = `用法：dsh-doctor [选项]
 
 const help = language => language === 'zh' ? HELP_ZH : HELP_EN
 
-function fail(message, language = 'en') {
-  process.stderr.write(`dsh-doctor: ${message}\n\n${help(language)}`)
-  process.exitCode = 2
-}
-
 function valueAfter(args, index, name) {
   const value = args[index + 1]
   if (value === undefined || value.startsWith('-')) throw new Error(`${name} needs a value`)
@@ -75,31 +70,37 @@ function parse(args) {
 }
 
 async function main() {
-  let options
-  try {
-    options = parse(process.argv.slice(2))
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error))
+  const options = parse(process.argv.slice(2))
+  if (options.version) {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const manifest = JSON.parse(readFileSync(resolve(here, '..', 'package.json'), 'utf8'))
+    process.stdout.write(`${manifest.version}\n`)
+    return
+  }
+  if (options.help) {
+    const requested = ['auto', 'zh', 'en'].includes(options.lang) ? options.lang : undefined
+    const language = resolveLanguage({
+      requested,
+      home: resolveDshHome(options.home),
+      systemLocale: Intl.DateTimeFormat().resolvedOptions().locale,
+    })
+    process.stdout.write(help(language))
     return
   }
   const language = resolveLanguage({
     requested: options.lang,
-    home: resolve(options.home ?? defaultDshHome()),
+    home: resolveDshHome(options.home),
     systemLocale: Intl.DateTimeFormat().resolvedOptions().locale,
   })
   if (options.yes && !options.fix) throw new Error('--yes requires --fix')
   if (options.json && options.fix && !options.yes) throw new Error('--json --fix requires --yes because a prompt would corrupt JSON output')
-  if (options.help) {
-    process.stdout.write(help(language))
-  } else if (options.version) {
-    const here = dirname(fileURLToPath(import.meta.url))
-    const manifest = JSON.parse(readFileSync(resolve(here, '..', 'package.json'), 'utf8'))
-    process.stdout.write(`${manifest.version}\n`)
-  } else {
+  {
     let report = diagnose(options)
     let repairs = []
+    let actions = []
+    let repairDeclined = false
     if (options.fix) {
-      const actions = repairsFromReport(report)
+      actions = repairsFromReport(report)
       if (actions.length === 0 && report.context.dshCli?.commandRepairNeeded && !report.context.dshCli.available) {
         throw new Error(language === 'zh'
           ? '未找到可用的 DSH CLI，无法执行命令型修复；请使用 --dsh-command 指定当前安装的 dsh 或 lib/bin.js'
@@ -120,13 +121,20 @@ async function main() {
         if (confirmed) {
           repairs = applyRepairs(actions, { captureOutput: options.json })
           if (repairs.every(item => item.status === 'applied')) report = diagnose(options)
-        }
+        } else repairDeclined = true
       }
     }
     const output = options.fix ? { ...report, repairs } : report
+    const noRepairMessage = options.fix && repairs.length === 0 && !options.json
+      ? formatRepairOutcome(actions, repairs, {
+          declined: repairDeclined,
+          findingCount: report.findings.length,
+          language,
+        })
+      : ''
     process.stdout.write(options.json
       ? `${JSON.stringify(output, null, 2)}\n`
-      : `${formatReport(report, { color: process.stdout.isTTY, language })}${repairs.length > 0 ? `${language === 'zh' ? '修复结果' : 'Repairs'}: ${JSON.stringify(repairs, null, 2)}\n` : ''}`)
+      : `${formatReport(report, { color: process.stdout.isTTY, language })}${repairs.length > 0 ? `${language === 'zh' ? '修复结果' : 'Repairs'}: ${JSON.stringify(repairs, null, 2)}\n` : noRepairMessage}`)
     process.exitCode = repairs.some(item => item.status === 'failed') ? 2 : report.summary.errors > 0 ? 1 : 0
   }
 }
@@ -138,7 +146,7 @@ try {
   if (process.argv.includes('--json')) {
     process.stdout.write(`${JSON.stringify({ version: 1, operationalError: message }, null, 2)}\n`)
   } else {
-    process.stderr.write(`dsh-doctor: ${message}\n`)
+    process.stderr.write(`dsh-doctor: ${message}\n\n${help('en')}`)
   }
   process.exitCode = 2
 }

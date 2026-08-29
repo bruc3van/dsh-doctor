@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { defaultDshHome, diagnose, extractStaticRequires, formatReport } from '../src/doctor.mjs'
-import { applyRepairs, formatRepairPlan, repairsFromReport } from '../src/repair.mjs'
+import { localizedFinding } from '../src/i18n.mjs'
+import { applyRepairs, formatRepairOutcome, formatRepairPlan, repairsFromReport } from '../src/repair.mjs'
 
 function json(file, value) {
   mkdirSync(join(file, '..'), { recursive: true })
@@ -69,6 +70,16 @@ test('extractStaticRequires ignores Node built-ins and member methods', () => {
   `), ['real-package'])
 })
 
+test('extractStaticRequires keeps unscoped subpaths and ignores regular expression contents', () => {
+  assert.deepEqual(extractStaticRequires(`
+    const first = /require("inside-regex")/
+    const second = /["']/g
+    const quotient = total / count
+    require('lodash/fp')
+    require('real-package')
+  `), ['lodash/fp', 'real-package'])
+})
+
 test('a healthy profile passes the MVP checks', () => {
   const subject = fixture()
   json(join(subject.harness, 'packages', 'agent', 'agent', 'package.json'), {
@@ -107,6 +118,26 @@ test('classifies an undeclared plugin compatibility contract as unknown without 
   const output = formatReport(report, { language: 'zh' })
   assert.match(output, /插件兼容性: 0 个不兼容，0 个风险，1 个未知，0 个兼容/)
   assert.match(output, /本诊断结果由 @bruc3van\/dsh-doctor 生成，仅供参考。欢迎在 GitHub Star 或反馈问题：https:\/\/github\.com\/bruc3van\/dsh-doctor\n$/)
+})
+
+test('does not claim compatibility when an active Harness peer version cannot be resolved', () => {
+  const subject = fixture()
+  plugin(subject, {
+    name: 'fixture-plugin', version: '1.0.0',
+    peerDependencies: { '@deepseek-ai/dsh-agent': '^1.0.0' },
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  const shared = join(subject.home, 'profiles', 'node_modules', '@deepseek-ai', 'dsh')
+  json(join(shared, 'package.json'), {
+    name: '@deepseek-ai/dsh', version: '1.0.0', bin: { dsh: 'lib/bin.js' },
+  })
+  text(join(shared, 'lib', 'bin.js'), '#!/usr/bin/env node\n')
+
+  const report = diagnose({ home: subject.home, profile: 'web', env: { PATH: '' } })
+  assert.deepEqual(report.findings, [])
+  assert.equal(report.context.harness.version, '1.0.0')
+  assert.equal(report.context.packages[0].compatibility, 'unknown')
+  assert.match(formatReport(report), /could not resolve the active version/)
 })
 
 test('attributes bundle patch failures and warnings to plugin compatibility', () => {
@@ -450,6 +481,7 @@ test('uses the declared dependency name for command repairs after a manifest nam
 
 test('trims DSH_HOME before resolving it', () => {
   assert.equal(defaultDshHome({ DSH_HOME: '  ./fixture-home  ' }), join(process.cwd(), 'fixture-home'))
+  assert.equal(diagnose({ home: '~', profile: '..' }).context.home, homedir())
 })
 
 test('passes command repair arguments literally without a shell', () => {
@@ -484,13 +516,39 @@ test('captures command failures without leaking subprocess output to stdout', ()
   let leaked = ''
   process.stdout.write = value => { leaked += String(value); return true }
   try {
-    const results = applyRepairs([action], { captureOutput: true })
+    const results = applyRepairs([
+      action,
+      { ...action, id: 'not-attempted' },
+    ], { captureOutput: true })
     assert.equal(results[0].status, 'failed')
     assert.match(results[0].error, /status 3: failure detail/)
+    assert.deepEqual(results[1], { id: 'not-attempted', status: 'skipped' })
     assert.equal(leaked, '')
   } finally {
     process.stdout.write = originalWrite
   }
+})
+
+test('times out stalled command repairs and distinguishes a declined plan from no repairs', () => {
+  const action = {
+    id: 'stalled-command', kind: 'command', risk: 'medium', description: 'timeout check',
+    command: [process.execPath, '-e', 'setTimeout(() => {}, 10_000)'],
+  }
+  const results = applyRepairs([action], { captureOutput: true, commandTimeoutMs: 100 })
+  assert.equal(results[0].status, 'failed')
+  assert.match(results[0].error, /timed out after 100 ms/)
+  assert.equal(formatRepairOutcome([action], [], { declined: true, language: 'en' }), 'Repairs: cancelled by the user.\n')
+  assert.equal(formatRepairOutcome([], [], { findingCount: 1, language: 'en' }), 'Repairs: no safe automatic repairs are available; follow the diagnostic suggestions manually.\n')
+})
+
+test('localizes the unreadable client bundle repair suggestion', () => {
+  const localized = localizedFinding({
+    code: 'CLIENT_BUNDLE_UNREADABLE',
+    package: 'fixture-plugin',
+    message: 'fixture-plugin client bundle cannot be read.',
+    suggestion: 'Upgrade fixture-plugin; if no compatible release exists, remove it through the same DSH installation.',
+  }, 'zh')
+  assert.equal(localized.suggestion, '更新 fixture-plugin；如果没有兼容版本，再通过同一个 DSH 安装移除该插件。')
 })
 
 test('formats the same report in Chinese without changing stable finding codes', () => {

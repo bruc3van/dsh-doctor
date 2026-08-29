@@ -25,6 +25,11 @@ test('CLI uses exit code 2 for arguments and machine-readable runtime failures',
   assert.equal(result.status, 2)
   assert.match(result.stderr, /unknown option/)
 
+  result = spawnSync(process.execPath, [cli, '--unknown', '--json'], { encoding: 'utf8' })
+  assert.equal(result.status, 2)
+  assert.match(JSON.parse(result.stdout).operationalError, /unknown option/)
+  assert.equal(result.stderr, '')
+
   result = spawnSync(process.execPath, [cli, '--yes', '--json'], { encoding: 'utf8' })
   assert.equal(result.status, 2)
   assert.match(JSON.parse(result.stdout).operationalError, /--yes requires --fix/)
@@ -38,6 +43,10 @@ test('CLI exposes the package version and repair flags', () => {
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' })
   assert.match(help.stdout, /--fix, --repair/)
   assert.match(help.stdout, /--yes/)
+
+  const helpWithIrrelevantFlags = spawnSync(process.execPath, [cli, '--yes', '--lang', 'fr', '--help'], { encoding: 'utf8' })
+  assert.equal(helpWithIrrelevantFlags.status, 0)
+  assert.match(helpWithIrrelevantFlags.stdout, /^(?:Usage:|用法：)/)
 })
 
 test('CLI applies a confirmed repair, creates a backup, and re-diagnoses', () => {
@@ -79,6 +88,17 @@ test('CLI refuses an unconfirmed repair in a non-interactive process', () => {
   result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--dsh-command', process.execPath], { encoding: 'utf8', env: isolatedEnv })
   assert.equal(result.status, 2)
   assert.match(result.stderr, /interactive terminal or explicit --yes/)
+})
+
+test('CLI explains when findings have no safe automatic repair', () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-doctor-no-fix-'))
+  const profile = join(home, 'profiles', 'web')
+  mkdirSync(profile, { recursive: true })
+  writeFileSync(join(profile, 'package.json'), 'null\n')
+
+  const result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--yes', '--lang', 'en'], { encoding: 'utf8' })
+  assert.equal(result.status, 1)
+  assert.match(result.stdout, /no safe automatic repairs are available/)
 })
 
 test('CLI follows the DSH locale preference and supports an explicit language', () => {

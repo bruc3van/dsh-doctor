@@ -2,6 +2,30 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.1.5
+
+### 主要更新
+
+- 修复插件兼容性误判：声明的 Harness peer 当前版本无法完整解析时，状态改为 `unknown`，不再错误标记为 `compatible`。
+- 完善 client bundle 静态扫描，支持未加 scope 的子路径 `require()`，并避免正则字面量造成误报或吞掉后续真实依赖。
+- 统一命令行错误边界：`--json` 参数错误保持单一 JSON 文档，help/version 优先处理，路径参数支持 `~` 展开。
+- 完善修复结果：失败后的动作标记为 `skipped`，用户取消与无可执行修复分别显示准确文案，并补齐 client bundle 更新建议的中文输出。
+- 为命令型修复增加 10 分钟超时和更大的 JSON 输出缓冲区，避免网络命令无限挂起或因正常输出较多而失败。
+- 修正中英文文档中的 DSH CLI 实际查找顺序，并补充 `DSH_DOCTOR_DSH_COMMAND` 和兼容性未知状态说明。
+
+### 安装
+
+```sh
+npm install --global @bruc3van/dsh-doctor@0.1.5
+dsh-doctor
+```
+
+### 验证
+
+- 48 项测试全部通过。
+- 已覆盖 peer 版本无法解析、子路径 require、正则字面量、JSON 参数错误、取消修复、超时与中文建议等回归场景。
+- GitHub Actions 继续覆盖 macOS、Ubuntu 和 Windows，以及 Node.js 22.19 和 24。
+
 ## v0.1.4
 
 ### 主要更新

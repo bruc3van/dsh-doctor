@@ -23,7 +23,7 @@ npx @bruc3van/dsh-doctor
 
 默认检查 `$DSH_HOME/profiles/web`；未设置 `DSH_HOME` 时使用 `~/.dsh`。
 
-Doctor 不要求 `dsh` 必须是全局命令。它会按顺序查找 PATH、当前项目安装、profile 共享安装或 npx 缓存留下的链接、已构建的 Harness 源码工作区。DSH Desktop 内置运行时或其他特殊安装可以通过 `--dsh-command /path/to/dsh`（也接受官方包的 `lib/bin.js`）明确指定。找不到 CLI 时仍会完成只读诊断，但不会提供或执行无法验证的命令型修复。
+Doctor 不要求 `dsh` 必须是全局命令。它会按顺序查找 `--dsh-command` 或 `DSH_DOCTOR_DSH_COMMAND` 指定的命令、显式 `--harness-root` 中的 CLI、profile 共享安装或 npx 缓存留下的链接、当前项目安装、PATH，最后是自动识别出的 Harness 源码工作区。DSH Desktop 内置运行时或其他特殊安装可以通过 `--dsh-command /path/to/dsh`（也接受官方包的 `lib/bin.js`）明确指定。找不到 CLI 时仍会完成只读诊断，但不会提供或执行无法验证的命令型修复。
 
 ## 工作方式
 
@@ -59,7 +59,7 @@ DSH 更新后，Doctor 会把每个 profile 插件归入一个明确状态，并
 
 - `incompatible`：已经发现会阻断插件加载或 Harness 启动的错误，例如插件未安装，或注入了已删除的 client runtime。
 - `risk`：发现当前版本风险，例如 Harness peer range 不接受新版本、仍依赖已删除的 DSH 包、Node.js 不兼容，或安装版本发生漂移。
-- `unknown`：插件没有通过 `peerDependencies` 声明 Harness 兼容范围；Doctor 无法证明它支持升级后的 DSH，但不会把未知误报成故障。
+- `unknown`：插件没有通过 `peerDependencies` 声明 Harness 兼容范围，或声明对应的当前 package 版本无法解析；Doctor 无法证明它支持升级后的 DSH，但不会把未知误报成故障。
 - `compatible`：插件声明的兼容范围接受当前 Harness，且没有发现插件相关错误或警告。
 
 兼容性检查覆盖所有 profile 直接插件，不再只检查带 `dsh.client` 的前端插件；纯 bundle 或服务端插件引用旧 Harness API 也会被报告。建议 DSH 升级后先运行一次 `dsh-doctor`，再根据精确的 update 建议决定是否执行 `dsh-doctor --fix`。
@@ -110,6 +110,7 @@ dsh-doctor --fix --yes --json
 - 外部命令使用固定 argv 调用，不拼接 shell 命令。
 - `--json --fix --yes` 会捕获子命令输出并放入修复结果，保证 stdout 始终只有一个合法 JSON 文档。
 - 命令修复绑定当前诊断的 `DSH_HOME`，并展示解析出的真实 CLI 路径；不会假定 PATH 中存在 `dsh`。
+- 单个命令修复最长运行 10 分钟，超时会终止该动作并把后续动作标记为跳过。
 - 任一步失败即停止后续修复，并保留已经创建的备份。
 - 完成后重新运行全部诊断，以最终状态决定退出码。
 
@@ -125,7 +126,7 @@ dsh-doctor --fix --yes --json
 
 - 静态扫描只识别代码中的字面量 `require("package")`；动态依赖需要未来的 bundle 元数据协议。
 - 配置检查覆盖语法和 Doctor 能稳定对齐的结构，并按当前 Harness patch 算法做无执行组合检查；不会求值 `!!js`，也不会加载第三方插件。
-- 版本兼容以插件 `peerDependencies` 和当前可解析 Harness package 版本为依据；未声明兼容范围的插件只能做结构检查。
+- 版本兼容以插件 `peerDependencies` 和当前可解析 Harness package 版本为依据；未声明兼容范围或无法解析对应当前版本的插件只能做结构检查。
 - lockfile 检查只对 profile 的直接依赖 importer 做确定性交叉验证，不递归扫描整个 npm 依赖树。
 - 真实启动探针尚未启用；即使复制 `DSH_HOME`，第三方插件仍可能访问网络、绝对路径或启动外部进程，不能宣称无副作用。
 

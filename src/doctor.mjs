@@ -87,6 +87,12 @@ function packagePathParts(name) {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name) ? [name] : undefined
 }
 
+function expandUserPath(value) {
+  if (value === '~') return homedir()
+  if (value.startsWith('~/') || value.startsWith('~\\')) return resolve(homedir(), value.slice(2))
+  return value
+}
+
 function packageManifestAt(directory, expectedName, findings, source) {
   const file = join(directory, 'package.json')
   if (!existsSync(file)) return undefined
@@ -174,11 +180,7 @@ function localDshPackage(start) {
 }
 
 function commandFromValue(value, env, cwd) {
-  const expanded = value === '~'
-    ? homedir()
-    : value.startsWith('~/') || value.startsWith('~\\')
-      ? resolve(homedir(), value.slice(2))
-      : value
+  const expanded = expandUserPath(value)
   const looksLikePath = isAbsolute(expanded) || expanded.includes('/') || expanded.includes('\\') || expanded.startsWith('.')
   const file = looksLikePath ? resolve(cwd, expanded) : executableOnPath(expanded, env)
   if (file === undefined) return undefined
@@ -206,7 +208,13 @@ function resolveDshCli(options, harness, home) {
 
   const sharedPackage = join(home, 'profiles', 'node_modules', '@deepseek-ai', 'dsh')
   if (existsSync(sharedPackage)) {
-    const bin = manifestBin(realpathSync(sharedPackage))
+    let canonical
+    try {
+      canonical = realpathSync(sharedPackage)
+    } catch {
+      canonical = undefined
+    }
+    const bin = canonical === undefined ? undefined : manifestBin(canonical)
     if (bin !== undefined) return { command: [process.execPath, bin.bin], path: bin.bin, source: 'profile', version: bin.version }
   }
 
@@ -270,7 +278,7 @@ function indexWorkspace(root, findings) {
 
 function resolveHarnessContext(home, explicitRoot, findings) {
   if (explicitRoot !== undefined) {
-    const root = resolve(explicitRoot)
+    const root = resolve(expandUserPath(explicitRoot))
     if (!existsSync(join(root, 'package.json')) || !existsSync(join(root, 'packages'))) {
       findings.push(finding('error', 'INVALID_HARNESS_ROOT', 'The configured Harness root is not a source checkout.', {
         evidence: root,
@@ -284,7 +292,16 @@ function resolveHarnessContext(home, explicitRoot, findings) {
 
   const sharedDsh = join(home, 'profiles', 'node_modules', '@deepseek-ai', 'dsh')
   if (existsSync(sharedDsh)) {
-    const canonical = realpathSync(sharedDsh)
+    let canonical
+    try {
+      canonical = realpathSync(sharedDsh)
+    } catch (error) {
+      findings.push(finding('warning', 'HARNESS_INSTALLATION_UNKNOWN', 'Could not resolve the DSH installation currently used by this home.', {
+        evidence: `${sharedDsh}: ${error instanceof Error ? error.message : String(error)}`,
+        suggestion: 'Repair the shared DSH installation or pass --harness-root for a source checkout.',
+      }))
+      return { root: undefined, packages: new Map(), version: undefined, authoritative: false }
+    }
     const root = findHarnessRoot(canonical)
     if (root !== undefined) {
       const manifest = readJson(join(root, 'package.json'), 'Harness root manifest', findings)
@@ -393,7 +410,10 @@ export function extractStaticRequires(source) {
     if (!code[match.index]) continue
     const specifier = match[2]
     if (specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('node:') || BUILTIN_MODULES.has(specifier)) continue
-    if (packagePathParts(specifier) !== undefined || specifier.startsWith('@')) values.add(specifier)
+    const packageName = specifier.startsWith('@')
+      ? specifier.split('/').slice(0, 2).join('/')
+      : specifier.split('/')[0]
+    if (packagePathParts(packageName) !== undefined) values.add(specifier)
   }
   return [...values].sort()
 }
@@ -401,6 +421,7 @@ export function extractStaticRequires(source) {
 function codePositions(source) {
   const code = new Uint8Array(source.length)
   let state = 'code'
+  let regexClass = false
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index]
     const next = source[index + 1]
@@ -413,6 +434,9 @@ function codePositions(source) {
         index += 1
       } else if (char === "'" || char === '"' || char === '`') {
         state = char
+      } else if (char === '/' && regexCanStart(source, index)) {
+        state = 'regex'
+        regexClass = false
       } else {
         code[index] = 1
       }
@@ -426,6 +450,12 @@ function codePositions(source) {
         state = 'code'
         index += 1
       }
+    } else if (state === 'regex') {
+      if (char === '\\') index += 1
+      else if (char === '[') regexClass = true
+      else if (char === ']') regexClass = false
+      else if (char === '/' && !regexClass) state = 'code'
+      else if (char === '\n' || char === '\r') state = 'code'
     } else if (char === '\\') {
       index += 1
     } else if (char === state) {
@@ -433,6 +463,17 @@ function codePositions(source) {
     }
   }
   return code
+}
+
+function regexCanStart(source, slashIndex) {
+  let index = slashIndex - 1
+  while (index >= 0 && /\s/.test(source[index])) index -= 1
+  if (index < 0) return true
+  if ('([{=,:;!&|?~+-*%^<>'.includes(source[index])) return true
+  if (!/[a-zA-Z0-9_$]/.test(source[index])) return false
+  const end = index + 1
+  while (index >= 0 && /[a-zA-Z0-9_$]/.test(source[index])) index -= 1
+  return /^(?:await|case|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield)$/.test(source.slice(index + 1, end))
 }
 
 function stripClientSuffix(specifier) {
@@ -505,6 +546,7 @@ function inspectClientPackage(record, context) {
       package: name,
       evidence: record.file,
       suggestion: disableSuggestion,
+      repair: updateRepair(profile, name, commandRepair),
     }))
     return
   }
@@ -526,6 +568,8 @@ function inspectClientPackage(record, context) {
     findings.push(finding('error', 'CLIENT_BUNDLE_UNREADABLE', `${name} client bundle cannot be read.`, {
       package: name,
       evidence: `${file}: ${error instanceof Error ? error.message : String(error)}`,
+      suggestion: disableSuggestion,
+      repair: updateRepair(profile, name, commandRepair),
     }))
     return
   }
@@ -1027,8 +1071,11 @@ function inspectCompatibility(record, context) {
     }
   }
   const mismatches = []
+  let declaredPeers = 0
+  let resolvedPeers = 0
   for (const [name, range] of peers) {
     if (!name.startsWith('@deepseek-ai/') && name !== 'cordis') continue
+    declaredPeers += 1
     if (semver.validRange(range) === null) {
       findings.push(finding('warning', 'INVALID_HARNESS_PEER_RANGE', `${packageName} declares an invalid Harness peer range for ${name}.`, {
         package: packageName,
@@ -1041,6 +1088,7 @@ function inspectCompatibility(record, context) {
     if (supplier === undefined) continue
     const version = supplier.manifest?.version
     if (typeof version !== 'string' || semver.valid(version) === null) continue
+    resolvedPeers += 1
     if (semver.satisfies(version, range, { includePrerelease: true })) continue
     mismatches.push({ name, required: range, active: version })
   }
@@ -1070,6 +1118,7 @@ function inspectCompatibility(record, context) {
       repair: updateRepair(profile, packageName, commandRepair),
     }))
   }
+  return { declaredPeers, resolvedPeers }
 }
 
 function hasHarnessCompatibilityDeclaration(record) {
@@ -1078,28 +1127,31 @@ function hasHarnessCompatibilityDeclaration(record) {
     .some(name => name.startsWith('@deepseek-ai/') || name === 'cordis')
 }
 
-function pluginCompatibility(record, findings) {
+function pluginCompatibility(record, findings, compatibilityCheck) {
   const name = record.requestedName ?? record.manifest.name
   const related = findings.filter(item => item.package === name)
   if (related.some(item => item.severity === 'error')) return 'incompatible'
   if (related.some(item => item.severity === 'warning')) return 'risk'
   if (!hasHarnessCompatibilityDeclaration(record)) return 'unknown'
+  if (compatibilityCheck.resolvedPeers < compatibilityCheck.declaredPeers) return 'unknown'
   return 'compatible'
 }
 
 export function defaultDshHome(env = process.env) {
   const configured = env.DSH_HOME?.trim()
   if (configured !== undefined && configured.length > 0) {
-    if (configured === '~') return homedir()
-    if (configured.startsWith('~/') || configured.startsWith('~\\')) return resolve(homedir(), configured.slice(2))
-    return resolve(configured)
+    return resolve(expandUserPath(configured))
   }
   return join(homedir(), '.dsh')
 }
 
+export function resolveDshHome(value, env = process.env) {
+  return resolve(expandUserPath(value ?? defaultDshHome(env)))
+}
+
 export function diagnose(options = {}) {
   const findings = []
-  const home = resolve(options.home ?? defaultDshHome(options.env))
+  const home = resolveDshHome(options.home, options.env)
   const profile = options.profile ?? 'web'
   if (profile === '' || profile === '.' || profile === '..' || profile.includes('/') || profile.includes('\\')) {
     findings.push(finding('error', 'INVALID_PROFILE_NAME', `Invalid profile name ${JSON.stringify(profile)}.`))
@@ -1268,6 +1320,7 @@ export function diagnose(options = {}) {
   const thirdPartyRecords = dependencyNames
     .map(name => records.get(name))
     .filter(record => record !== undefined)
+  const compatibilityChecks = new Map()
   for (const record of thirdPartyRecords) {
     inspectClientPackage(record, {
       findings,
@@ -1277,7 +1330,7 @@ export function diagnose(options = {}) {
       profile,
       resolvePackage,
     })
-    inspectCompatibility(record, {
+    const check = inspectCompatibility(record, {
       findings,
       commandRepair,
       profile,
@@ -1285,6 +1338,7 @@ export function diagnose(options = {}) {
       harnessPackages: harness.packages,
       harnessPackagesAuthoritative: harness.authoritative,
     })
+    compatibilityChecks.set(record.requestedName ?? record.manifest.name, check)
     inspectPluginNodeEngine(
       record,
       dshCli?.command?.[0] === process.execPath ? process.version : undefined,
@@ -1311,7 +1365,11 @@ export function diagnose(options = {}) {
         installed: true,
         client: record.manifest?.dsh?.client !== undefined,
         bundle: record.manifest?.dsh?.bundle !== undefined,
-        compatibility: pluginCompatibility(record, findings),
+        compatibility: pluginCompatibility(
+          record,
+          findings,
+          compatibilityChecks.get(record.requestedName ?? record.manifest.name),
+        ),
       }
     }),
   }, findings)
@@ -1400,7 +1458,7 @@ export function formatReport(report, options = {}) {
     .sort((left, right) => left.name.localeCompare(right.name))
 
   if (report.findings.length === 0 && unknownPackages.length === 0) {
-    lines.push(paint('info', zh ? '正常  当前检查范围内未发现问题。' : 'OK  No problems found by the MVP checks.'))
+    lines.push(paint('info', zh ? '正常  当前检查范围内未发现问题。' : 'OK  No problems found by the current checks.'))
   } else {
     if (problemPackages.length > 0) {
       lines.push(zh
@@ -1459,8 +1517,8 @@ export function formatReport(report, options = {}) {
       for (const plugin of unknownPackages) {
         lines.push(`[${zh ? '未知' : 'UNKNOWN'}] ${plugin.name}${plugin.version ? ` ${plugin.version}` : ''}`)
         appendReportField(lines, zh ? '原因' : 'Reason', zh
-          ? '插件没有声明当前 DSH 的兼容范围。'
-          : 'The plugin does not declare a compatibility range for the active DSH.')
+          ? '插件没有声明当前 DSH 的兼容范围，或 Doctor 无法解析声明所对应的当前版本。'
+          : 'The plugin declares no range for the active DSH, or Doctor could not resolve the active version for a declared peer.')
         appendReportField(lines, zh ? '建议' : 'Action', zh
           ? '升级 DSH 后请关注该插件的发布说明或向插件作者确认。'
           : 'After a DSH upgrade, review the plugin release notes or ask its author to confirm compatibility.')

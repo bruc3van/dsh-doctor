@@ -23,7 +23,7 @@ npx @bruc3van/dsh-doctor
 
 By default, Doctor checks `$DSH_HOME/profiles/web`. If `DSH_HOME` is unset, it uses `~/.dsh`.
 
-Doctor does not require `dsh` to be installed as a global command. It searches PATH, the current project, shared profile installations, links left by the npx cache, and built Harness source checkouts, in that order. For a bundled DSH Desktop runtime or another custom installation, pass `--dsh-command /path/to/dsh`; the official package's `lib/bin.js` is also accepted. If no CLI can be found, Doctor still completes its read-only checks but does not offer or run command-based repairs that it cannot verify.
+Doctor does not require `dsh` to be installed as a global command. It searches, in order, an explicit `--dsh-command` or `DSH_DOCTOR_DSH_COMMAND`, the CLI under an explicit `--harness-root`, the shared profile installation or links left by the npx cache, the current project, PATH, and finally an automatically detected Harness source checkout. For a bundled DSH Desktop runtime or another custom installation, pass `--dsh-command /path/to/dsh`; the official package's `lib/bin.js` is also accepted. If no CLI can be found, Doctor still completes its read-only checks but does not offer or run command-based repairs that it cannot verify.
 
 ## How it works
 
@@ -80,7 +80,7 @@ After DSH is updated, Doctor assigns every direct profile plugin one explicit st
 
 - `incompatible`: Doctor found an error that can prevent the plugin or Harness from loading, such as a missing plugin or an injection targeting a removed client runtime.
 - `risk`: Doctor found a current-version risk, such as a Harness peer range that rejects the new version, a dependency on a removed DSH package, an unsupported Node.js version, or installation drift.
-- `unknown`: The plugin does not declare a Harness compatibility range through `peerDependencies`. Doctor cannot prove it supports the upgraded DSH, but does not report uncertainty as a failure.
+- `unknown`: The plugin does not declare a Harness compatibility range through `peerDependencies`, or the active package version for a declared peer cannot be resolved. Doctor cannot prove it supports the upgraded DSH, but does not report uncertainty as a failure.
 - `compatible`: The declared compatibility ranges accept the active Harness and no plugin-related errors or warnings were found.
 
 Compatibility checks cover every direct profile plugin, not only frontend plugins with `dsh.client`. References to removed Harness APIs in bundle-only or server-side plugins are reported as well. After upgrading DSH, run `dsh-doctor` first, review the exact update recommendations, and then decide whether to continue with `dsh-doctor --fix`.
@@ -110,6 +110,7 @@ Every executable repair has a stable ID, risk level, description, and exact targ
 - External commands use fixed argument arrays and never construct shell commands.
 - `--json --fix --yes` captures subprocess output in the repair result so stdout remains exactly one valid JSON document.
 - Command repairs bind the diagnosed `DSH_HOME` and show the resolved CLI path instead of assuming `dsh` exists on PATH.
+- Each command repair has a 10-minute limit; a timeout terminates that action and marks subsequent actions as skipped.
 - A failed repair stops later actions and preserves backups already created.
 - Doctor runs every diagnostic again after repairs and uses the final state for its exit code.
 
@@ -125,7 +126,7 @@ The initial release automatically performs only deterministic operations, such a
 
 - Static scanning recognizes only literal `require("package")` calls. Dynamic dependencies require a future bundle metadata contract.
 - Configuration checks cover syntax and structures that Doctor can align deterministically. Patch composition follows the current Harness algorithm, but Doctor does not evaluate `!!js` or load third-party plugins.
-- Version compatibility is based on plugin `peerDependencies` and resolvable active Harness package versions. A plugin without a declared range can receive only structural checks and an `unknown` compatibility state.
+- Version compatibility is based on plugin `peerDependencies` and resolvable active Harness package versions. A plugin without a declared range, or whose corresponding active version cannot be resolved, can receive only structural checks and an `unknown` compatibility state.
 - Lockfile checks deterministically cross-check the direct profile importer only; they do not recursively scan the complete npm dependency graph.
 - A runtime startup probe is not enabled. Even a copied `DSH_HOME` would not make arbitrary third-party plugin code side-effect-free because it could access the network, absolute paths, or external processes.
 

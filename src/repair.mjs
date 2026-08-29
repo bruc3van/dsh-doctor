@@ -3,6 +3,9 @@ import { copyFileSync, readFileSync, renameSync, statSync, writeFileSync } from 
 import { dirname, join } from 'node:path'
 import crossSpawn from 'cross-spawn'
 
+export const COMMAND_TIMEOUT_MS = 10 * 60 * 1000
+const COMMAND_MAX_BUFFER = 16 * 1024 * 1024
+
 function hash(value) {
   return createHash('sha256').update(value).digest('hex')
 }
@@ -38,6 +41,16 @@ export function formatRepairPlan(actions, options = {}) {
   return options.prompt === false
     ? plan.trimEnd()
     : `${plan}${zh ? '执行这些修复吗？[y/N] ' : 'Apply these repairs? [y/N] '}`
+}
+
+export function formatRepairOutcome(actions, results, options = {}) {
+  if (results.length > 0) return ''
+  const zh = options.language === 'zh'
+  if (options.declined === true) return zh ? '修复结果：用户已取消。\n' : 'Repairs: cancelled by the user.\n'
+  if (actions.length > 0) return ''
+  return options.findingCount === 0
+    ? zh ? '修复结果：当前无需修复。\n' : 'Repairs: no repairs are needed.\n'
+    : zh ? '修复结果：没有可安全自动执行的修复，请按诊断建议手动处理。\n' : 'Repairs: no safe automatic repairs are available; follow the diagnostic suggestions manually.\n'
 }
 
 function localizedDescription(action, zh) {
@@ -90,11 +103,15 @@ function limitedOutput(value, limit = 8192) {
 function applyCommand(action, options) {
   const [command, ...args] = action.command
   const captureOutput = options.captureOutput === true
+  const timeout = options.commandTimeoutMs ?? COMMAND_TIMEOUT_MS
+  if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('command repair timeout must be a positive number')
   const result = crossSpawn.sync(command, args, {
     stdio: captureOutput ? ['ignore', 'pipe', 'pipe'] : 'inherit',
-    ...captureOutput ? { encoding: 'utf8' } : {},
+    ...captureOutput ? { encoding: 'utf8', maxBuffer: COMMAND_MAX_BUFFER } : {},
     env: action.env === undefined ? process.env : { ...process.env, ...action.env },
+    timeout,
   })
+  if (result.error?.code === 'ETIMEDOUT') throw new Error(`${command} timed out after ${String(timeout)} ms`)
   if (result.error != null) throw result.error
   if (result.status !== 0) {
     const reason = result.signal === null
@@ -115,7 +132,8 @@ function applyCommand(action, options) {
 
 export function applyRepairs(actions, options = {}) {
   const results = []
-  for (const action of actions) {
+  for (let index = 0; index < actions.length; index += 1) {
+    const action = actions[index]
     try {
       results.push(action.kind === 'json-edit' ? applyJsonEdit(action) : applyCommand(action, options))
     } catch (error) {
@@ -124,6 +142,9 @@ export function applyRepairs(actions, options = {}) {
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
       })
+      for (const skipped of actions.slice(index + 1)) {
+        results.push({ id: skipped.id, status: 'skipped' })
+      }
       break
     }
   }
