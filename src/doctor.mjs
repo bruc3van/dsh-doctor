@@ -1,6 +1,9 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import yaml from 'js-yaml'
+import semver from 'semver'
+import { parseDocument } from 'yaml'
 
 export const PLATFORM_MODULES = new Set([
   'react',
@@ -14,6 +17,16 @@ export const PLATFORM_MODULES = new Set([
 ])
 
 const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 }
+const JS_EXPRESSION = new yaml.Type('tag:yaml.org,2002:js', {
+  kind: 'scalar',
+  resolve: value => typeof value === 'string' && value.trim().length > 0,
+  construct: value => value,
+})
+const PATCH_SCHEMA = yaml.DEFAULT_SCHEMA.extend([JS_EXPRESSION])
+
+function objectRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : undefined
+}
 
 function finding(severity, code, message, options = {}) {
   return {
@@ -23,6 +36,7 @@ function finding(severity, code, message, options = {}) {
     ...options.package === undefined ? {} : { package: options.package },
     ...options.evidence === undefined ? {} : { evidence: options.evidence },
     ...options.suggestion === undefined ? {} : { suggestion: options.suggestion },
+    ...options.repair === undefined ? {} : { repair: options.repair },
   }
 }
 
@@ -37,7 +51,15 @@ function readJson(file, subject, findings) {
     return undefined
   }
   try {
-    return JSON.parse(text)
+    const parsed = JSON.parse(text)
+    if (objectRecord(parsed) === undefined) {
+      findings.push(finding('error', 'INVALID_JSON_OBJECT', `${subject} must contain a JSON object.`, {
+        evidence: file,
+        suggestion: 'Restore a valid package manifest object before starting Harness.',
+      }))
+      return undefined
+    }
+    return parsed
   } catch (error) {
     findings.push(finding('error', 'INVALID_JSON', `${subject} is not valid JSON.`, {
       evidence: `${file}: ${error instanceof Error ? error.message : String(error)}`,
@@ -177,14 +199,53 @@ function packageResolver(profileDir, home, harnessPackages, findings) {
   }
 }
 
+function bundleResolver(profileDir, home, harnessPackages, findings) {
+  return (name) => {
+    const workspace = harnessPackages.get(name)
+    if (workspace !== undefined) return workspace
+    const parts = packagePathParts(name)
+    if (parts === undefined) return undefined
+    for (const candidate of [
+      join(home, 'profiles', 'node_modules', ...parts),
+      join(profileDir, 'node_modules', ...parts),
+    ]) {
+      if (!existsSync(join(candidate, 'package.json'))) continue
+      return packageManifestAt(candidate, name, findings, 'bundle')
+    }
+    return undefined
+  }
+}
+
 function clientExport(manifest) {
   const value = manifest?.exports?.['./client']
   if (typeof value === 'string') return value
   if (value !== null && typeof value === 'object') {
     if (typeof value.default === 'string') return value.default
-    if (typeof value.browser === 'string') return value.browser
   }
   return undefined
+}
+
+function dependencyEntries(value, field, file, findings) {
+  if (value === undefined) return []
+  const record = objectRecord(value)
+  if (record === undefined || Object.values(record).some(item => typeof item !== 'string')) {
+    findings.push(finding('error', 'INVALID_DEPENDENCY_MAP', `${field} must be an object of package names to string ranges.`, {
+      evidence: file,
+      suggestion: `Repair ${field} before managing or starting this profile.`,
+    }))
+    return []
+  }
+  return Object.entries(record)
+}
+
+function updateRepair(profile, name) {
+  return {
+    id: `update-package:${name}`,
+    kind: 'command',
+    risk: 'medium',
+    description: `Update ${name} in profile ${profile}.`,
+    command: ['dsh', 'plugin', '--profile', profile, 'update', name],
+  }
 }
 
 function safePackageFile(packageDir, exported) {
@@ -197,13 +258,52 @@ function safePackageFile(packageDir, exported) {
 
 export function extractStaticRequires(source) {
   const values = new Set()
+  const code = codePositions(source)
   const pattern = /\brequire\s*\(\s*(['"])([^'"\\\r\n]+)\1\s*\)/g
   for (const match of source.matchAll(pattern)) {
+    if (!code[match.index]) continue
     const specifier = match[2]
     if (specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('node:')) continue
     if (packagePathParts(specifier) !== undefined || specifier.startsWith('@')) values.add(specifier)
   }
   return [...values].sort()
+}
+
+function codePositions(source) {
+  const code = new Uint8Array(source.length)
+  let state = 'code'
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+    const next = source[index + 1]
+    if (state === 'code') {
+      if (char === '/' && next === '/') {
+        state = 'line-comment'
+        index += 1
+      } else if (char === '/' && next === '*') {
+        state = 'block-comment'
+        index += 1
+      } else if (char === "'" || char === '"' || char === '`') {
+        state = char
+      } else {
+        code[index] = 1
+      }
+    } else if (state === 'line-comment') {
+      if (char === '\n') {
+        state = 'code'
+        code[index] = 1
+      }
+    } else if (state === 'block-comment') {
+      if (char === '*' && next === '/') {
+        state = 'code'
+        index += 1
+      }
+    } else if (char === '\\') {
+      index += 1
+    } else if (char === state) {
+      state = 'code'
+    }
+  }
+  return code
 }
 
 function stripClientSuffix(specifier) {
@@ -227,9 +327,29 @@ function inspectClientPackage(record, context) {
       package: name,
       evidence: record.file,
       suggestion: disableSuggestion,
+      repair: updateRepair(profile, name),
     }))
     return
   }
+
+  if (typeof declaration.platform !== 'string') {
+    findings.push(finding('error', 'INVALID_CLIENT_PLATFORM', `${name} dsh.client.platform must be a string.`, {
+      package: name,
+      evidence: record.file,
+      suggestion: disableSuggestion,
+      repair: updateRepair(profile, name),
+    }))
+    return
+  }
+  if (declaration.immediately !== undefined && typeof declaration.immediately !== 'boolean') {
+    findings.push(finding('error', 'INVALID_CLIENT_IMMEDIATELY', `${name} dsh.client.immediately must be a boolean.`, {
+      package: name,
+      evidence: record.file,
+      suggestion: disableSuggestion,
+      repair: updateRepair(profile, name),
+    }))
+  }
+  if (declaration.platform !== 'web') return
 
   const external = stringArray(declaration.external)
   const inject = stringArray(declaration.inject)
@@ -238,6 +358,7 @@ function inspectClientPackage(record, context) {
       package: name,
       evidence: record.file,
       suggestion: disableSuggestion,
+      repair: updateRepair(profile, name),
     }))
   }
   if (declaration.inject !== undefined && inject === undefined) {
@@ -245,6 +366,7 @@ function inspectClientPackage(record, context) {
       package: name,
       evidence: record.file,
       suggestion: disableSuggestion,
+      repair: updateRepair(profile, name),
     }))
   }
 
@@ -263,6 +385,7 @@ function inspectClientPackage(record, context) {
       package: name,
       evidence: file ?? `${record.file}: exports["./client"] = ${JSON.stringify(exported)}`,
       suggestion: `Reinstall or rebuild ${name}; if it remains broken, run dsh plugin --profile ${profile} remove ${name}.`,
+      repair: updateRepair(profile, name),
     }))
     return
   }
@@ -286,6 +409,7 @@ function inspectClientPackage(record, context) {
         package: name,
         evidence: file,
         suggestion: disableSuggestion,
+        repair: updateRepair(profile, name),
       }))
     }
   }
@@ -308,6 +432,7 @@ function inspectClientPackage(record, context) {
         package: name,
         evidence: record.file,
         suggestion: disableSuggestion,
+        repair: updateRepair(profile, name),
       }))
     }
   }
@@ -320,6 +445,7 @@ function inspectClientPackage(record, context) {
           package: name,
           evidence: record.file,
           suggestion: disableSuggestion,
+          repair: updateRepair(profile, name),
         }))
       }
     }
@@ -355,11 +481,123 @@ function inspectBundle(name, record, findings) {
     return
   }
   const file = safePackageFile(record.directory, patch)
-  if (file === undefined || !existsSync(file)) {
+  if (file === undefined || !existsSync(file) || !statSync(file).isFile()) {
     findings.push(finding('error', 'BUNDLE_PATCH_MISSING', `${name} bundle patch is missing.`, {
       package: name,
       evidence: file ?? `${record.file}: dsh.bundle.patch = ${JSON.stringify(patch)}`,
       suggestion: 'Reinstall or upgrade this bundle, or remove it from the profile.',
+    }))
+  } else inspectPatchFile(file, `${name} bundle patch`, findings)
+}
+
+function inspectPatchFile(file, subject, findings) {
+  let parsed
+  try {
+    parsed = yaml.load(readFileSync(file, 'utf8'), { schema: PATCH_SCHEMA })
+  } catch (error) {
+    findings.push(finding('error', 'INVALID_PATCH_YAML', `${subject} cannot be parsed.`, {
+      evidence: `${file}: ${error instanceof Error ? error.message : String(error)}`,
+      suggestion: 'Repair the YAML syntax before starting this profile.',
+    }))
+    return
+  }
+  if (!Array.isArray(parsed) || parsed.some(item => objectRecord(item) === undefined)) {
+    findings.push(finding('error', 'INVALID_PATCH_LIST', `${subject} must be a top-level YAML array of mappings.`, {
+      evidence: file,
+      suggestion: 'Repair the patch structure before starting this profile.',
+    }))
+  }
+}
+
+function inspectSettings(file, findings) {
+  if (!existsSync(file)) return
+  let root
+  try {
+    if (file.endsWith('.json')) root = JSON.parse(readFileSync(file, 'utf8'))
+    else {
+      const document = parseDocument(readFileSync(file, 'utf8'), { prettyErrors: true })
+      if (document.errors.length > 0) {
+        const positions = document.errors.map(error => {
+          const at = error.linePos?.[0]
+          return `${error.code}${at === undefined ? '' : ` at line ${String(at.line)}, column ${String(at.col)}`}`
+        })
+        throw new Error(positions.join('; '))
+      }
+      root = document.toJS() ?? {}
+    }
+  } catch (error) {
+    findings.push(finding('error', 'INVALID_SETTINGS_DOCUMENT', 'Harness settings cannot be parsed.', {
+      evidence: `${file}: ${error instanceof Error ? error.message : String(error)}`,
+      suggestion: 'Repair the settings syntax; Doctor will not guess credential or model values.',
+    }))
+    return
+  }
+  if (objectRecord(root) === undefined) {
+    findings.push(finding('error', 'INVALID_SETTINGS_ROOT', 'Harness settings must be a map of namespace sections.', {
+      evidence: file,
+      suggestion: 'Replace the root scalar or array with a mapping.',
+    }))
+  }
+}
+
+function inspectCredentials(file, findings) {
+  if (!existsSync(file)) return
+  let root
+  try {
+    const document = parseDocument(readFileSync(file, 'utf8'), { prettyErrors: true, uniqueKeys: true })
+    if (document.errors.length > 0) {
+      const positions = document.errors.map(error => {
+        const at = error.linePos?.[0]
+        return `${error.code}${at === undefined ? '' : ` at line ${String(at.line)}, column ${String(at.col)}`}`
+      })
+      throw new Error(positions.join('; '))
+    }
+    root = document.toJS() ?? {}
+  } catch (error) {
+    findings.push(finding('error', 'INVALID_CREDENTIALS_DOCUMENT', 'Harness credentials cannot be parsed.', {
+      evidence: `${file}: ${error instanceof Error ? error.message : String(error)}`,
+      suggestion: 'Repair only the reported structure; Doctor never prints or rewrites secret values.',
+    }))
+    return
+  }
+  const fields = objectRecord(root)
+  if (fields === undefined) {
+    findings.push(finding('error', 'INVALID_CREDENTIALS_ROOT', 'Harness credentials must be a mapping.', { evidence: file }))
+    return
+  }
+  const keys = Object.keys(fields)
+  if (keys.length === 0) return
+  if (fields.version !== 1 || keys.some(key => !['version', 'refs', 'records'].includes(key))) {
+    findings.push(finding('error', 'INVALID_CREDENTIALS_LAYOUT', 'Harness credentials do not use the supported version 1 layout.', {
+      evidence: file,
+      suggestion: 'Migrate the document structure without exposing or changing its secret values.',
+    }))
+  }
+}
+
+function inspectPatchFileIfPresent(file, subject, findings) {
+  if (existsSync(file)) inspectPatchFile(file, subject, findings)
+}
+
+function inspectCompatibility(record, context) {
+  const { findings, harnessPackages, profile, resolvePackage } = context
+  const peers = dependencyEntries(record.manifest.peerDependencies, 'peerDependencies', record.file, findings)
+  const mismatches = []
+  for (const [name, range] of peers) {
+    if (!name.startsWith('@deepseek-ai/') && name !== 'cordis') continue
+    const supplier = harnessPackages.get(name) ?? resolvePackage(name)
+    if (supplier === undefined) continue
+    const version = supplier.manifest?.version
+    if (typeof version !== 'string' || semver.valid(version) === null || semver.validRange(range) === null) continue
+    if (semver.satisfies(version, range, { includePrerelease: true })) continue
+    mismatches.push(`${name} ${range} (active ${version})`)
+  }
+  if (mismatches.length > 0) {
+    findings.push(finding('warning', 'HARNESS_PEER_VERSION_MISMATCH', `${record.manifest.name} has Harness peer ranges that do not accept the active versions.`, {
+      package: record.manifest.name,
+      evidence: mismatches.join(', '),
+      suggestion: `Update ${record.manifest.name} to a release compatible with the active Harness.`,
+      repair: updateRepair(profile, record.manifest.name),
     }))
   }
 }
@@ -398,7 +636,9 @@ export function diagnose(options = {}) {
 
   const harness = resolveHarnessContext(home, options.harnessRoot, findings)
   const resolvePackage = packageResolver(profileDir, home, harness.packages, findings)
-  const dependencyNames = Object.keys(profileManifest.dependencies ?? {})
+  const resolveBundle = bundleResolver(profileDir, home, harness.packages, findings)
+  const dependencyEntriesList = dependencyEntries(profileManifest.dependencies, 'dependencies', profileManifestFile, findings)
+  const dependencyNames = dependencyEntriesList.map(([name]) => name)
   const bundles = profileManifest?.dsh?.profile?.bundles
   if (bundles !== undefined && (!Array.isArray(bundles) || !bundles.every(item => typeof item === 'string'))) {
     findings.push(finding('error', 'INVALID_BUNDLE_LIST', 'dsh.profile.bundles must be a string array.', {
@@ -407,11 +647,23 @@ export function diagnose(options = {}) {
     }))
   }
   const bundleNames = Array.isArray(bundles) ? bundles.filter(item => typeof item === 'string') : []
+  const patchReload = profileManifest?.dsh?.profile?.patchReload
+  if (patchReload !== undefined && patchReload !== 'live' && patchReload !== 'startup') {
+    findings.push(finding('error', 'INVALID_PATCH_RELOAD', 'dsh.profile.patchReload must be "live" or "startup".', {
+      evidence: profileManifestFile,
+      suggestion: 'Choose the reload lifecycle intended for this profile.',
+    }))
+  }
 
   const records = new Map()
-  for (const name of new Set([...dependencyNames, ...bundleNames])) {
+  for (const name of dependencyNames) {
     const record = resolvePackage(name)
     if (record !== undefined) records.set(name, record)
+  }
+  const bundleRecords = new Map()
+  for (const name of bundleNames) {
+    const record = resolveBundle(name)
+    if (record !== undefined) bundleRecords.set(name, record)
   }
   for (const name of dependencyNames) {
     const record = records.get(name)
@@ -420,18 +672,56 @@ export function diagnose(options = {}) {
         package: name,
         evidence: profileManifestFile,
         suggestion: `Run dsh plugin --profile ${profile} install.`,
+        repair: {
+          id: `install-profile:${profile}`,
+          kind: 'command',
+          risk: 'medium',
+          description: `Install the declared dependencies for profile ${profile}.`,
+          command: ['dsh', 'plugin', '--profile', profile, 'install'],
+        },
       }))
       continue
+    }
+    const declared = dependencyEntriesList.find(([dependency]) => dependency === name)?.[1]
+    const installed = record.manifest?.version
+    if (typeof declared === 'string' && typeof installed === 'string'
+      && semver.validRange(declared) !== null && semver.valid(installed) !== null
+      && !semver.satisfies(installed, declared, { includePrerelease: true })) {
+      findings.push(finding('warning', 'PROFILE_DEPENDENCY_VERSION_MISMATCH', `Profile requests ${name} ${declared}, but ${installed} is installed.`, {
+        package: name,
+        evidence: record.file,
+        suggestion: `Reconcile the profile installation with dsh plugin --profile ${profile} install.`,
+        repair: {
+          id: `install-profile:${profile}`,
+          kind: 'command',
+          risk: 'medium',
+          description: `Install the declared dependencies for profile ${profile}.`,
+          command: ['dsh', 'plugin', '--profile', profile, 'install'],
+        },
+      }))
     }
     if (record.manifest?.dsh?.bundle?.patch !== undefined && !bundleNames.includes(name)) {
       findings.push(finding('warning', 'INSTALLED_BUNDLE_INACTIVE', `${name} is installed as a bundle but is absent from dsh.profile.bundles.`, {
         package: name,
         evidence: profileManifestFile,
         suggestion: 'Re-run the matching dsh plugin add/update command or remove the unused dependency.',
+        repair: {
+          id: `activate-bundle:${name}`,
+          kind: 'json-edit',
+          risk: 'low',
+          description: `Add ${name} to dsh.profile.bundles.`,
+          file: profileManifestFile,
+          operation: { type: 'add-bundle', name },
+        },
       }))
     }
   }
-  for (const name of bundleNames) inspectBundle(name, records.get(name), findings)
+  for (const name of bundleNames) inspectBundle(name, bundleRecords.get(name), findings)
+
+  inspectPatchFileIfPresent(join(profileDir, 'cordis.patch.yml'), 'profile patch', findings)
+  inspectPatchFileIfPresent(join(home, 'cordis.patch.yml'), 'home patch', findings)
+  inspectSettings(join(home, 'settings.yaml'), findings)
+  inspectCredentials(join(home, '.credentials.yaml'), findings)
 
   const thirdPartyRecords = dependencyNames
     .map(name => records.get(name))
@@ -443,6 +733,12 @@ export function diagnose(options = {}) {
       harnessPackagesAuthoritative: harness.authoritative,
       profile,
       resolvePackage,
+    })
+    inspectCompatibility(record, {
+      findings,
+      profile,
+      resolvePackage,
+      harnessPackages: harness.packages,
     })
   }
 
@@ -471,7 +767,7 @@ function finish(context, findings) {
     warnings: findings.filter(item => item.severity === 'warning').length,
     info: findings.filter(item => item.severity === 'info').length,
   }
-  return { version: 1, context, summary, findings }
+  return { version: 1, ok: summary.errors === 0, context, summary, findings }
 }
 
 export function formatReport(report, options = {}) {

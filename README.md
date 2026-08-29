@@ -1,64 +1,89 @@
 # DSH Doctor
 
-DSH Doctor 是一个独立、只读的 DeepSeek Harness profile 诊断工具。它不启动目标 Cordis 插件树，因此旧插件已经导致 Web UI 无法启动时仍可运行。
+DSH Doctor 用来定位 DeepSeek Harness 无法启动、配置损坏和第三方插件不兼容等常见问题。默认运行完全只读；只有显式使用 `--fix`，查看精确的文件或命令计划并确认后，它才会实施可回滚的修复。
 
-## 当前 MVP 能检查什么
+这是社区维护的第三方工具，不属于 DeepSeek 官方项目。它不会加载或执行待检查插件的代码。
 
-- profile 的 `package.json` 是否存在且可解析
-- profile 依赖和 `dsh.profile.bundles` 是否已安装
-- bundle 是否声明并实际携带 `dsh.bundle.patch`
-- 声明了 `dsh.client` 的第三方插件是否携带 `./client` bundle
-- client bundle 的静态 `require()` 是否遗漏 `dsh.client.external`
-- `dsh.client.external` 是否有当前 Client 模块提供者
-- 第三方插件是否仍 `inject` 当前 Harness 源码树中已经删除的包
-- 第三方插件是否保留已删除 Harness 包的 peer dependency 风险
+## 安装
 
-MVP 不修改 profile，不卸载插件，也不执行第三方插件代码。
-
-## 使用
-
-直接从源码运行：
+需要 Node.js `22.19+` 或 `24+`：
 
 ```sh
-node src/cli.mjs
+npm install --global @bruc3van/dsh-doctor
+dsh-doctor
+```
+
+也可以临时运行：
+
+```sh
+npx @bruc3van/dsh-doctor
 ```
 
 默认检查 `$DSH_HOME/profiles/web`；未设置 `DSH_HOME` 时使用 `~/.dsh`。
 
-常用参数：
+## 常用命令
 
 ```sh
-node src/cli.mjs --profile web
-node src/cli.mjs --home /path/to/.dsh --profile web
-node src/cli.mjs --harness-root /path/to/deepseek-harness
-node src/cli.mjs --json
-```
-
-也可以注册为本机命令：
-
-```sh
-npm link
+# 只读诊断
+dsh-doctor
 dsh-doctor --profile web
+dsh-doctor --home /path/to/.dsh
+
+# 机器可读的只读报告，不显示提示
+dsh-doctor --json
+
+# 展示修复计划，确认后实施并重新诊断
+dsh-doctor --fix
+
+# 自动化环境中显式确认当前计划
+dsh-doctor --fix --yes --json
 ```
 
-退出码：
+`--repair` 是 `--fix` 的别名。`--yes` 只有和 `--fix` 一起使用才有效。
 
-- `0`：MVP 检查没有发现阻断问题
-- `1`：发现可能导致 Harness 无法启动的问题
-- `2`：命令参数错误
+## 当前检查范围
 
-## 对典型旧插件故障的输出
+- profile `package.json` 的 JSON 根结构、依赖表、bundle 列表和 reload 生命周期
+- profile、home 和 bundle 的 `cordis.patch.yml` 语法与顶层结构，包括 `!!js` 表达式
+- `settings.yaml` 和 `.credentials.yaml` 的安全结构检查；凭据诊断不输出秘密值
+- profile 依赖、bundle 声明、patch 文件和 client bundle 是否存在
+- `dsh.client` 的 `platform`、`immediately`、`inject`、`external` 和 `./client` export contract
+- client bundle 中字面量 `require()` 与 external/module supplier 的一致性
+- 已删除的 Harness client package 引用
+- 第三方插件 peer range 与当前 Harness 实际版本的兼容性
+- Harness installation 优先于 profile 同名 bundle 的真实解析顺序
 
-如果旧插件 bundle 仍包含：
+## 修复安全边界
 
-```js
-require("@deepseek-ai/dsh-client-runtime/client")
+每条可执行修复都包含稳定 ID、风险级别、说明和精确目标：
+
+- 文件修复在确认前展示路径，确认后再次校验 SHA-256 指纹。
+- 写入前创建 `.dsh-doctor-<timestamp>.bak` 备份，再通过同目录临时文件原子替换。
+- 外部命令使用固定 argv 调用，不拼接 shell 命令。
+- 任一步失败即停止后续修复，并保留已经创建的备份。
+- 完成后重新运行全部诊断，以最终状态决定退出码。
+
+首期只自动处理确定性操作，例如把已安装 bundle 恢复到 manifest 列表，或运行明确的 profile install/update。损坏 JSON/YAML、凭据值和插件移除只给建议，不猜测应该删除或改成什么。
+
+## 退出码
+
+- `0`：没有阻断错误；warning 仍会显示
+- `1`：发现可能阻断 Harness 启动的问题
+- `2`：参数、运行环境或修复执行失败
+
+## 当前限制
+
+- 静态扫描只识别代码中的字面量 `require("package")`；动态依赖需要未来的 bundle 元数据协议。
+- 配置检查覆盖语法和 Doctor 能稳定对齐的结构，但不执行 `!!js`，也不启动第三方插件。
+- 版本兼容以插件 `peerDependencies` 和当前可解析 Harness package 版本为依据；未声明兼容范围的插件只能做结构检查。
+- 真实启动探针尚未默认启用，因为启动第三方插件可能产生网络、进程或持久化副作用。优先使用只读配置组合检查。
+
+## 从源码开发
+
+```sh
+npm install
+npm run check
+node src/cli.mjs --help
 ```
 
-但未声明当前模块图需要的 external，Doctor 会报告 `UNDECLARED_CLIENT_REQUIRE`。如果插件还通过 `dsh.client.inject` 引用当前 Harness 已删除的包，也会报告 `REMOVED_CLIENT_INJECT`，并建议升级或禁用插件，而不是自动添加不安全的兼容 shim。
-
-## MVP 限制
-
-- 静态扫描只识别字面量 `require("package")`；动态拼接的依赖需要未来的 bundle 元数据协议支持。
-- 当前平台 seed module 列表随本版本工具维护；未来应由 Harness 暴露可机读的 Doctor 协议。
-- 当前版本只诊断，不提供 `--repair`、自动备份、隔离或回滚。
+新包需要先由 `@bruc3van` 对应的 npm 账号完成一次 `npm publish --access public`，创建公开包页面。然后在 npm 包设置中添加 GitHub Actions Trusted Publisher：Organization or user 为 `bruc3van`，Repository 为 `dsh-doctor`，Workflow filename 为 `release.yml`，Environment 留空，Allowed actions 只启用 `npm publish`。后续推送与 `package.json` 版本一致的 `vX.Y.Z` tag，workflow 会通过 OIDC 发布并由 npm 自动生成 provenance，不需要保存长期 npm token。

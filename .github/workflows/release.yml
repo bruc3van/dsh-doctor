@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
+  npm:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Verify tag and inspect registry
+        id: registry
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          package_name=$(node -p "require('./package.json').name")
+          package_version=$(node -p "require('./package.json').version")
+          test "$TAG" = "v$package_version"
+
+          if remote_integrity=$(npm view "$package_name@$package_version" dist.integrity --registry=https://registry.npmjs.org 2>/dev/null); then
+            local_integrity=$(npm pack --dry-run --json | node -e "let input=''; process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => console.log(JSON.parse(input)[0].integrity))")
+            test "$local_integrity" = "$remote_integrity"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish to npm
+        if: steps.registry.outputs.published != 'true'
+        run: npm publish --access public

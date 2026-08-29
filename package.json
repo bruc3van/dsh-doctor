@@ -1,11 +1,19 @@
 {
-  "name": "dsh-doctor",
+  "name": "@bruc3van/dsh-doctor",
   "version": "0.1.0",
-  "description": "Read-only diagnostics for DeepSeek Harness profiles and third-party plugins",
+  "description": "Diagnostics and confirmed recovery for DeepSeek Harness profiles and third-party plugins",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bruc3van/dsh-doctor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bruc3van/dsh-doctor/issues"
+  },
+  "homepage": "https://github.com/bruc3van/dsh-doctor#readme",
   "bin": {
-    "dsh-doctor": "./src/cli.mjs"
+    "dsh-doctor": "src/cli.mjs"
   },
   "files": [
     "src",
@@ -14,9 +22,20 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/cli.mjs && node --check src/doctor.mjs && npm test"
+    "check": "node --check src/cli.mjs && node --check src/doctor.mjs && node --check src/repair.mjs && npm test",
+    "prepublishOnly": "npm run check"
+  },
+  "dependencies": {
+    "cross-spawn": "^7.0.6",
+    "js-yaml": "^4.2.0",
+    "semver": "^7.7.2",
+    "yaml": "^2.8.1"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }
