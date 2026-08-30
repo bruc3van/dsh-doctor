@@ -15,11 +15,17 @@ const HELP_EN = `Usage:
   dsh-doctor diagnose [options]
   dsh-doctor recover <package> [--action <action>] [options]
   dsh-doctor baseline <create|compare> [options]
+  dsh-doctor migrations list
+  dsh-doctor migrate <analyze|apply|verify> [plugin-root] [options]
 
 Commands:
   diagnose                 inspect the selected profile (default command)
   recover <package>        build and optionally execute one explicit recovery decision
   baseline create|compare  save or compare a pre-upgrade diagnostic snapshot
+  migrations list          list built-in versioned migration catalogs
+  migrate analyze          find source, manifest, artifact, and semantic migration work
+  migrate apply            preview or apply only exact catalog codemods with backups
+  migrate verify           run static, build, or isolated runtime verification
 
 Options:
   --profile <name>       profile to inspect (default: web)
@@ -36,6 +42,11 @@ Options:
   --json                 print machine-readable JSON
   --fix, --repair        legacy confirmed repairs (never removes a plugin)
   --yes                  confirm an explicit write or command
+  --from <ref>            source DSH ref (default: dsh-v0.1.1-rc.2)
+  --to <ref>              target DSH ref (default: dsh-v0.1.2-alpha.2)
+  --safe                  restrict migrate apply to catalog-confirmed exact rewrites
+  --level <level>         static, build, or runtime verification
+  --keep-temp             retain a successful runtime verification directory
   -h, --help             show help
   -v, --version          show version
 `
@@ -44,11 +55,17 @@ const HELP_ZH = `用法：
   dsh-doctor diagnose [选项]
   dsh-doctor recover <包名> [--action <动作>] [选项]
   dsh-doctor baseline <create|compare> [选项]
+  dsh-doctor migrations list
+  dsh-doctor migrate <analyze|apply|verify> [插件目录] [选项]
 
 命令：
   diagnose                 检查选定的 profile（默认命令）
   recover <包名>           生成并按确认执行一个明确的恢复动作
   baseline create|compare  保存或比较升级前诊断快照
+  migrations list          列出内置的版本化迁移目录
+  migrate analyze          识别源码、manifest、产物和语义迁移任务
+  migrate apply            预览或应用 catalog 确认的精确改写并创建备份
+  migrate verify           执行静态、构建或隔离运行时验证
 
 选项：
   --profile <名称>       要检查的 profile（默认：web）
@@ -65,6 +82,11 @@ const HELP_ZH = `用法：
   --json                 输出机器可读 JSON
   --fix, --repair        旧式确认修复（绝不移除插件）
   --yes                  确认一个明确的写入或命令动作
+  --from <ref>           源 DSH ref（默认：dsh-v0.1.1-rc.2）
+  --to <ref>             目标 DSH ref（默认：dsh-v0.1.2-alpha.2）
+  --safe                 migrate apply 仅执行 catalog 确认的精确改写
+  --level <级别>        static、build 或 runtime
+  --keep-temp            成功后仍保留运行时验证目录
   -h, --help             显示帮助
   -v, --version          显示版本
 `
@@ -85,9 +107,12 @@ function optionValue(arg, name) {
 function parse(args) {
   const options = { command: 'diagnose' }
   let index = 0
-  if (['diagnose', 'recover', 'baseline'].includes(args[0])) options.command = args[index++]
+  if (['diagnose', 'recover', 'baseline', 'migrations', 'migrate'].includes(args[0])) options.command = args[index++]
   if (options.command === 'recover' && args[index] !== undefined && !args[index].startsWith('-')) options.package = args[index++]
   if (options.command === 'baseline' && args[index] !== undefined && !args[index].startsWith('-')) options.baselineAction = args[index++]
+  if (options.command === 'migrations' && args[index] !== undefined && !args[index].startsWith('-')) options.migrationsAction = args[index++]
+  if (options.command === 'migrate' && args[index] !== undefined && !args[index].startsWith('-')) options.migrateAction = args[index++]
+  if (options.command === 'migrate' && args[index] !== undefined && !args[index].startsWith('-')) options.pluginRoot = args[index++]
   for (; index < args.length; index += 1) {
     const arg = args[index]
     if (arg === '--profile') options.profile = valueAfter(args, index++, arg)
@@ -113,6 +138,14 @@ function parse(args) {
     else if (arg === '--json') options.json = true
     else if (arg === '--fix' || arg === '--repair') options.fix = true
     else if (arg === '--yes') options.yes = true
+    else if (arg === '--from') options.from = valueAfter(args, index++, arg)
+    else if (arg.startsWith('--from=')) options.from = optionValue(arg, '--from')
+    else if (arg === '--to') options.to = valueAfter(args, index++, arg)
+    else if (arg.startsWith('--to=')) options.to = optionValue(arg, '--to')
+    else if (arg === '--safe') options.safe = true
+    else if (arg === '--level') options.level = valueAfter(args, index++, arg)
+    else if (arg.startsWith('--level=')) options.level = optionValue(arg, '--level')
+    else if (arg === '--keep-temp') options.keepTemp = true
     else if (arg === '--help' || arg === '-h') options.help = true
     else if (arg === '--version' || arg === '-v') options.version = true
     else throw new Error(`unknown option ${arg}`)
@@ -244,10 +277,45 @@ async function main() {
   const language = resolveLanguage({ requested: requestedLanguage, home: resolveDshHome(options.home), systemLocale: Intl.DateTimeFormat().resolvedOptions().locale })
   if (options.help) return process.stdout.write(help(language))
   if (options.fix && options.command !== 'diagnose') throw new Error('--fix/--repair can only be used with diagnose')
-  if (options.yes && !options.fix && options.command === 'diagnose') throw new Error('--yes requires --fix or an explicit recover action')
+  if (options.yes && !options.fix && options.command === 'diagnose') throw new Error('--yes requires --fix or an explicit recover/migrate action')
   if (options.json && options.fix && !options.yes) throw new Error('--json --fix requires --yes because a prompt would corrupt JSON output')
   if (options.fix) return legacyFix(options, language)
   if (options.command === 'recover') return runRecover(options)
+  if (options.command === 'migrations') {
+    if (options.migrationsAction !== 'list') throw new Error('migrations needs list')
+    const { listMigrations } = await import('./migration-catalog.mjs')
+    const migrations = listMigrations()
+    if (options.json) print({ schemaVersion: 1, migrations }, options)
+    else process.stdout.write(`${migrations.map(item => `${item.from.ref} -> ${item.to.ref} (${item.id})`).join('\n')}\n`)
+    return
+  }
+  if (options.command === 'migrate') {
+    if (!['analyze', 'apply', 'verify'].includes(options.migrateAction)) throw new Error('migrate needs analyze, apply, or verify')
+    if (options.migrateAction === 'apply' && options.safe !== true) throw new Error('migrate apply requires --safe')
+    if (options.migrateAction === 'apply' && options.pluginRoot === undefined) throw new Error('migrate apply requires an explicit plugin root')
+    const migrationOptions = { from: options.from, to: options.to, harnessRoot: options.harnessRoot, dshCommand: options.dshCommand, level: options.level, yes: options.yes, safe: options.safe, keepTemp: options.keepTemp }
+    if (options.migrateAction === 'verify') {
+      const { formatVerification, verifyMigration } = await import('./migrate-verify.mjs')
+      const result = verifyMigration(options.pluginRoot, migrationOptions)
+      print(options.json ? result : formatVerification(result, language), options)
+      process.exitCode = result.passed ? 0 : 1
+      return
+    }
+    const { analyzeMigration, applyMigration, formatMigrationReport, publicMigrationReport } = await import('./migrate.mjs')
+    const report = analyzeMigration(options.pluginRoot, migrationOptions)
+    if (options.migrateAction === 'apply') {
+      const result = applyMigration(report, migrationOptions)
+      if (options.json) print(result, options)
+      else if (result.mode === 'preview') process.stdout.write(`${formatMigrationReport(result, language)}${language === 'zh' ? '这是预览；加入 --yes 后才会写入。' : 'This is a preview; add --yes to write.'}\n`)
+      else process.stdout.write(`${language === 'zh' ? '已应用安全改写并创建备份。' : 'Safe edits applied with backups.'}\n${formatMigrationReport(result.report, language)}`)
+      const remaining = result.mode === 'applied' ? result.report : result
+      process.exitCode = remaining.summary.errors > 0 ? 1 : 0
+      return
+    }
+    print(options.json ? publicMigrationReport(report) : formatMigrationReport(report, language), options)
+    process.exitCode = report.summary.errors > 0 ? 1 : 0
+    return
+  }
   const report = diagnose(diagnosisOptions(options))
   if (options.command === 'baseline') {
     if (!['create', 'compare'].includes(options.baselineAction)) throw new Error('baseline needs create or compare')

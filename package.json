@@ -1,7 +1,7 @@
 {
   "name": "@bruc3van/dsh-doctor",
-  "version": "0.4.0",
-  "description": "Diagnose DSH upgrade failures and make evidence-backed plugin recovery, quarantine, or removal decisions",
+  "version": "0.5.0",
+  "description": "Diagnose DSH upgrades, migrate plugins with safe codemods, and verify recovery decisions",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -17,19 +17,22 @@
   },
   "files": [
     "src",
+    "migrations",
+    "skills",
     "README.md",
     "README.en.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/cli.mjs && node --check src/doctor.mjs && node --check src/i18n.mjs && node --check src/repair.mjs && npm test",
+    "check": "node --check src/cli.mjs && node --check src/doctor.mjs && node --check src/i18n.mjs && node --check src/repair.mjs && node --check src/migration-catalog.mjs && node --check src/migrate.mjs && node --check src/migrate-verify.mjs && npm test",
     "prepublishOnly": "npm run check"
   },
   "dependencies": {
     "cross-spawn": "^7.0.6",
     "js-yaml": "^4.2.0",
     "semver": "^7.7.2",
+    "typescript": "^6.0.3",
     "yaml": "^2.8.1"
   },
   "engines": {

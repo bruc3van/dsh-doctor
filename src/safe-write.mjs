@@ -7,8 +7,9 @@ export function sha256(text) {
 }
 
 export function snapshotFile(file) {
-  const text = existsSync(file) ? readFileSync(file, 'utf8') : ''
-  return { file, exists: existsSync(file), text, hash: sha256(text) }
+  const exists = existsSync(file)
+  const text = exists ? readFileSync(file, 'utf8') : ''
+  return { file, exists, text, hash: sha256(text) }
 }
 
 export function atomicWrite(snapshot, nextText, options = {}) {

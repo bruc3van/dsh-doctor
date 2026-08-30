@@ -23,6 +23,36 @@ npx @bruc3van/dsh-doctor diagnose
 
 默认检查 `$DSH_HOME/profiles/web`；未设置 `DSH_HOME` 时使用 `~/.dsh`。特殊安装可用 `--dsh-command /path/to/dsh` 指定实际 CLI，源码工作区可用 `--harness-root /path/to/deepseek-harness`。
 
+## 插件从 0.1.1 升级到 0.1.2
+
+Doctor 内置 `dsh-v0.1.1-rc.2 → dsh-v0.1.2-alpha.2` 的版本化迁移目录，并把升级拆成三个可审计阶段：
+
+```sh
+# 1. 只读分析源码、类型导入、manifest、client graph 与构建产物
+dsh-doctor migrate analyze /path/to/plugin \
+  --harness-root /path/to/deepseek-harness
+
+# 2. 预览 catalog 确认为 exact 的改写；加入 --yes 才写入并创建备份
+dsh-doctor migrate apply /path/to/plugin --safe \
+  --harness-root /path/to/deepseek-harness
+dsh-doctor migrate apply /path/to/plugin --safe --yes \
+  --harness-root /path/to/deepseek-harness
+
+# 3. 依次完成静态、构建和隔离运行时验证
+dsh-doctor migrate verify /path/to/plugin --level static \
+  --harness-root /path/to/deepseek-harness
+dsh-doctor migrate verify /path/to/plugin --level build --yes \
+  --harness-root /path/to/deepseek-harness
+dsh-doctor migrate verify /path/to/plugin --level runtime --yes \
+  --harness-root /path/to/deepseek-harness
+```
+
+`analyze` 使用 TypeScript AST，因此能识别不会出现在 JavaScript bundle 中的 `import type`。`apply --safe` 只迁移 catalog 标记为精确等价的符号，并把非移除的 DSH 开发依赖固定到目标版本；例如 store 工具迁往 `dsh-client-store`，`ClientContext` 迁往 Cordis `Context` 并保留本地别名。它可能补充精确符号迁移需要的新依赖，但不会自动修改已有 peer 的版本范围。Session、Workspace、Conversation 和 pending interaction 属于所有权及生命周期变化，会保留为 `MIG_SEMANTIC_API_CHANGE`，不会被机械替换。
+
+`artifact-verified` 至少要求成功执行 `build` 或 `pack:check`，仅有 `test`/`typecheck` 不足以证明发布产物。`runtime` 会从插件仓库打真实 tarball，在临时 `DSH_HOME` 中通过目标 DSH CLI 安装到全新 web profile、组合配置并做激活 smoke，不触碰普通用户的 `~/.dsh`；它还会核验目标 CLI 版本、profile manifest、安装后的包、bundle 激活和有效配置证据，不能由一个只返回成功码的空脚本伪造。失败现场会保留并报告路径；成功后默认清理。最高状态分为 `analyzed`、`source-migrated`、`artifact-verified` 和 `runtime-verified`；真实 UI、生命周期与业务行为仍需单独验证。
+
+仓库还随包提供 [`dsh-plugin-upgrade` skill](skills/dsh-plugin-upgrade/SKILL.md)，用于指导编码 Agent 严格按上述阶段帮助插件开发者升级。
+
 ## 0.4.0 的诊断模型
 
 `diagnose` 从空树开始，按当前 DSH 的正式顺序组合：

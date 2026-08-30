@@ -17,6 +17,27 @@ dsh-doctor diagnose
 
 The default target is `$DSH_HOME/profiles/web`, falling back to `~/.dsh`. Use `--dsh-command /path/to/dsh` for a special installation or `--harness-root /path/to/deepseek-harness` for a source checkout.
 
+## Upgrade a plugin from 0.1.1 to 0.1.2
+
+Doctor ships a versioned `dsh-v0.1.1-rc.2 → dsh-v0.1.2-alpha.2` migration catalog and exposes three auditable stages:
+
+```sh
+dsh-doctor migrate analyze /path/to/plugin --harness-root /path/to/deepseek-harness
+
+dsh-doctor migrate apply /path/to/plugin --safe --harness-root /path/to/deepseek-harness
+dsh-doctor migrate apply /path/to/plugin --safe --yes --harness-root /path/to/deepseek-harness
+
+dsh-doctor migrate verify /path/to/plugin --level static --harness-root /path/to/deepseek-harness
+dsh-doctor migrate verify /path/to/plugin --level build --yes --harness-root /path/to/deepseek-harness
+dsh-doctor migrate verify /path/to/plugin --level runtime --yes --harness-root /path/to/deepseek-harness
+```
+
+Analysis uses the TypeScript AST and therefore sees type-only imports that disappear from JavaScript bundles. Safe apply only rewrites catalog-confirmed exact moves, pins non-removed DSH development dependencies to the target, and creates timestamped backups. It may add dependencies required by exact symbol moves, but it does not automatically change existing peer ranges. Session, Workspace, Conversation, and pending-interaction ownership changes remain explicit semantic tasks.
+
+`artifact-verified` requires a successful `build` or `pack:check`; `test`/`typecheck` alone cannot prove a publishable artifact. Runtime verification packs the real plugin and installs it with the target DSH CLI under a temporary `DSH_HOME`; it verifies the CLI version, profile manifest, resolved installed package, activated bundle, effective config, and activation smoke, so a no-op command cannot claim success. It never touches the normal `~/.dsh`. Failed workspaces are retained and reported. `runtime-verified` still does not prove real UI, lifecycle, or business behavior.
+
+The package also includes the [`dsh-plugin-upgrade` skill](skills/dsh-plugin-upgrade/SKILL.md) so coding agents can drive this workflow without collapsing its safety gates.
+
 ## Diagnosis model
 
 Version 0.4.0 composes the configuration from an empty tree in the same order as current DSH:

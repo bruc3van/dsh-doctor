@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "dsh-v0.1.1-rc.2__dsh-v0.1.2-alpha.2",
+  "from": {
+    "ref": "dsh-v0.1.1-rc.2",
+    "commit": "b150a551b8d465e31e418e1b2eaf5e79bbb7d28e"
+  },
+  "to": {
+    "ref": "dsh-v0.1.2-alpha.2",
+    "commit": "0a53fb55bea101816fa226bb964ae2bed71c343b",
+    "version": "0.1.2-alpha.2"
+  },
+  "description": "DeepSeek Harness 0.1.1-rc.2 to 0.1.2-alpha.2 plugin migration",
+  "references": {
+    "ownership": ".agents/notes/implemented/architecture/2026-08-20-client-session-conversation-ownership.md",
+    "remoteMigration": ".agents/notes/implemented/architecture/2026-08-10-unary-apiproxy-remote-migration.md",
+    "clientRules": "packages/client/AGENTS.md"
+  }
+}

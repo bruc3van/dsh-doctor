@@ -1,0 +1,62 @@
+{
+  "removed": [
+    "@deepseek-ai/dsh-acp-demo",
+    "@deepseek-ai/dsh-acp-snapshot",
+    "@deepseek-ai/dsh-client-runtime",
+    "@deepseek-ai/dsh-host-apiproxy",
+    "@deepseek-ai/dsh-sdk-jsonrpc-demo"
+  ],
+  "added": [
+    "@deepseek-ai/dsh-acp-app",
+    "@deepseek-ai/dsh-api-session-controller",
+    "@deepseek-ai/dsh-api-settings-controller",
+    "@deepseek-ai/dsh-api-workspace-controller",
+    "@deepseek-ai/dsh-client-store",
+    "@deepseek-ai/dsh-client-ui-approval",
+    "@deepseek-ai/dsh-client-ui-chat",
+    "@deepseek-ai/dsh-client-ui-schedule",
+    "@deepseek-ai/dsh-client-ui-session",
+    "@deepseek-ai/dsh-deepseek-llm-api-extensions",
+    "@deepseek-ai/dsh-deque",
+    "@deepseek-ai/dsh-experimental-agent-team-profile",
+    "@deepseek-ai/dsh-experimental-agent-team-web-profile",
+    "@deepseek-ai/dsh-experimental-client-ui-agent-team",
+    "@deepseek-ai/dsh-experimental-inspector",
+    "@deepseek-ai/dsh-experimental-webworker-packer",
+    "@deepseek-ai/dsh-experimental-webworker-runtime",
+    "@deepseek-ai/dsh-plugin-package-inventory-deepseek",
+    "@deepseek-ai/dsh-sdk-app",
+    "@deepseek-ai/dsh-sdk-minimal",
+    "@deepseek-ai/dsh-session-log-deepseek",
+    "@deepseek-ai/dsh-session-snapshot",
+    "@deepseek-ai/dsh-util-crypto",
+    "@deepseek-ai/dsh-util-time",
+    "@deepseek-ai/dsh-util-values",
+    "@deepseek-ai/dsh-util-workspace-path",
+    "@deepseek-ai/dsh-webhook",
+    "@deepseek-ai/dsh-webhook-github",
+    "@deepseek-ai/dsh-win32-process"
+  ],
+  "targetVersions": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-client-store": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-session": "0.1.2-alpha.2"
+  },
+  "semanticReplacements": {
+    "@deepseek-ai/dsh-client-runtime": [
+      "@deepseek-ai/dsh-api-session-controller",
+      "@deepseek-ai/dsh-api-workspace-controller",
+      "@deepseek-ai/dsh-client-store",
+      "@deepseek-ai/dsh-client-ui-session",
+      "@deepseek-ai/dsh-client-ui-conversation",
+      "@deepseek-ai/dsh-client-ui-chat",
+      "@deepseek-ai/dsh-client-ui-trajectory",
+      "@deepseek-ai/dsh-client-ui-approval",
+      "@deepseek-ai/dsh-client-ui-user-questions"
+    ],
+    "@deepseek-ai/dsh-host-apiproxy": [
+      "@deepseek-ai/dsh-api-gateway",
+      "@deepseek-ai/dsh-api-remotes"
+    ]
+  }
+}
