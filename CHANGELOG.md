@@ -2,6 +2,25 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.5.3
+
+### 主要更新
+
+- 重构中英文 README，把 `dsh-plugin-upgrade` skill 的安装和使用放在前面，用更直接的方式说明 Agent、CLI 与 migration catalog 如何配合完成插件代码迁移、重新构建和验证。
+- 对外统一描述为帮助插件从 DSH 0.1.1 升级到 0.1.2；`dsh-v0.1.1-rc.2` 与 `dsh-v0.1.2-alpha.2` 保留为当前 catalog 的精确参考点，其他 patch 或预发布组合需要核对实际差异。
+- 补充源码、依赖、client graph、构建产物、隔离运行时的覆盖范围，以及只读分析、精确 codemod、显式确认、备份、写入保护和脱敏等安全边界。
+- 同步更新 skill 描述、实际版本范围检查、发布准备说明和 eval；明确 Skill 只引导工作流程，不会自动修改全局 CLI、提交或发布插件。
+
+### 安装
+
+```sh
+npx skills add bruc3van/dsh-doctor
+```
+
+### 验证
+
+- 完成 skill 结构、95 项测试、npm 打包内容和远程 skill 安装检查，并由发布 CI 覆盖 macOS、Ubuntu、Windows 与 Node.js 22.19/24。
+
 ## v0.5.2
 
 ### 主要更新

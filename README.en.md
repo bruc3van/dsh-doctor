@@ -2,123 +2,187 @@
 
 [中文](README.md) | English
 
-DSH Doctor is a diagnostic and recovery-decision tool for DSH upgrade incidents. For each plugin, it explains the incompatibility, the configuration layer that caused or amplified it, the preferred repair, and whether temporary isolation or removal can be proven safe enough to offer.
+DSH Doctor helps an agent diagnose and upgrade DeepSeek Harness plugins: identify API changes between releases, modify code where the migration is known, point out semantic changes that need developer judgment, then rebuild and verify the plugin.
 
-This is a community-maintained third-party tool, not an official DeepSeek project. Normal diagnosis is read-only and never loads or executes inspected plugin code.
+The current focus is:
 
-## Install
+```text
+DSH 0.1.1 → DSH 0.1.2
+```
 
-Node.js `22.19+` or `24+` is required:
+The project also diagnoses DSH profiles and installed plugins, checks for compatible versions, and performs safety checks before quarantine or removal.
+
+> This is a community-maintained third-party project, not an official DeepSeek project. The current catalog uses `dsh-v0.1.1-rc.2` and `dsh-v0.1.2-alpha.2` as the reference points for the 0.1.1-to-0.1.2 changes. An agent should still check actual differences when a plugin uses another patch or prerelease.
+
+## Upgrade a plugin with the skill
+
+Install the repository's [`dsh-plugin-upgrade`](skills/dsh-plugin-upgrade/SKILL.md) skill:
+
+```sh
+npx skills add bruc3van/dsh-doctor
+```
+
+Then ask the agent from inside the plugin repository:
+
+```text
+Upgrade this plugin from DSH 0.1.1 to DSH 0.1.2.
+Analyze compatibility first, modify the code, then complete build and runtime verification.
+```
+
+The skill reminds the agent to work in this order:
+
+1. inspect the plugin root, Harness checkout, package manager, and available DSH Doctor;
+2. analyze source, type imports, dependencies, manifest, client graph, patches, and build output;
+3. preview and apply code changes that are known to be equivalent;
+4. use the new API owners to handle semantic changes that require understanding the plugin;
+5. rebuild the plugin and run static, build, and isolated runtime verification;
+6. report the changed files, remaining work, backups, and the verification level actually reached.
+
+`npx skills add` installs agent instructions only. It does not install DSH Doctor globally. The skill checks the local CLI and npm registry first. If the local version is unsuitable, it uses a pinned `npx` version by default and does not change the global npm installation.
+
+After verification, the agent can follow the plugin repository's existing versioning and release process if requested. The skill itself does not commit or publish anything automatically.
+
+## How it works
+
+DSH Doctor has three parts:
+
+- **Skill**: tells the agent which steps to follow, which actions need confirmation, and what to report;
+- **CLI**: scans the plugin, lists problems, changes deterministic code, and runs verification;
+- **Migration catalog**: records known package, API, Service, configuration, and behavior changes between the two DSH versions.
+
+The workflow is:
+
+```text
+analyze
+  → change deterministic code
+  → agent handles semantic changes
+  → rebuild
+  → static verification
+  → temporary-profile installation and activation
+  → publish through the plugin's own release process
+```
+
+The CLI only auto-edits migrations marked `exact` by the catalog. Ownership and lifecycle changes involving Session, Workspace, Conversation, and pending interactions are reported as `MIG_SEMANTIC_API_CHANGE`. The agent must handle them in the context of the plugin instead of applying a mechanical replacement.
+
+## Why versioned rules are needed
+
+DSH 0.1.2 changes more than package versions:
+
+- `@deepseek-ai/dsh-client-runtime` was removed and has no single aggregate replacement;
+- store features moved to `dsh-client-store`;
+- Session, Workspace, Conversation, and pending interactions moved to separate controllers or UI packages;
+- `@deepseek-ai/dsh-host-apiproxy` was removed, so browser calls move to the appropriate business Remote;
+- client graph, platform externals, exports, and some profile patch targets also changed.
+
+The migration catalog stores source/target tags and Git commits together with package, symbol, Service, and configuration rules. With `--harness-root`, the CLI verifies the commits behind both tags and compares entry ids in the target web profile. This gives the agent concrete version differences instead of making it guess the new API.
+
+## Coverage
+
+| Area | How Doctor and the agent handle it |
+|---|---|
+| JS/TS imports, including type-only, aliased, and mixed imports | Analyzed with the TypeScript AST; symbols with a known equivalent can be rewritten |
+| Removed or added DSH packages | Checked in source and manifest; dependencies are updated only when no remaining reference blocks the change |
+| DSH/Cordis version ranges | Checks dependencies, devDependencies, and peerDependencies; existing peer ranges are not widened automatically |
+| Session, Workspace, Conversation, and other semantic changes | Reports the new owner and reason; the agent modifies the business code |
+| `dsh.client` and client exports | Checks inject, external, platform, immediately, and `exports["./client"]` |
+| Harness patch targets | Compares old and new entries when an exact Harness checkout is available |
+| Build output | Scans `lib`, `dist`, `build`, and `out` for old APIs |
+| Plugin build | Runs existing typecheck, build, test, and pack:check scripts; build or pack:check is required for artifact verification |
+| Installation and activation | Packs the real tarball and installs it into a fresh web profile under a temporary `DSH_HOME` |
+| UI and business behavior | Not decided by Doctor; the agent or developer runs plugin-specific checks |
+
+Source analysis uses the TypeScript AST and is cross-checked against the manifest, client graph, and build output. A bundle without an old string does not prove that source code is compatible, and a successful compile does not prove that the published artifact or runtime is compatible.
+
+## Safety
+
+- `diagnose`, `migrate analyze`, and static verification are read-only and do not load or execute the inspected plugin;
+- `migrate apply` requires `--safe`; without `--yes`, it only previews changes;
+- only `exact` migrations are auto-edited; semantic changes are not guessed;
+- SHA-256 is checked before writing, so a file changed after preview is rejected;
+- existing files receive timestamped backups and are replaced atomically through a temporary file;
+- build and runtime verification execute plugin scripts and therefore require explicit `--yes`;
+- runtime verification uses a temporary `DSH_HOME`, not the normal `~/.dsh`;
+- JSON, baselines, and recovery snapshots redact plugin configuration and common secret/token/password/key fields;
+- global CLI installation, persistent quarantine, plugin removal, and publishing are never performed automatically by the skill.
+
+## Use the migration CLI manually
+
+Node.js `^22.19.0` or `>=24.0.0` is required.
+
+First confirm that the CLI contains the required migration:
+
+```sh
+npx --yes --package=@bruc3van/dsh-doctor@0.5.3 \
+  dsh-doctor migrations list
+```
+
+### 1. Analyze
+
+```sh
+dsh-doctor migrate analyze /path/to/plugin \
+  --from dsh-v0.1.1-rc.2 \
+  --to dsh-v0.1.2-alpha.2 \
+  --harness-root /path/to/deepseek-harness \
+  --json
+```
+
+Analysis checks source, dependencies, manifest, client graph, patch targets, and existing build output without executing plugin code.
+
+### 2. Apply
+
+```sh
+# Preview
+dsh-doctor migrate apply /path/to/plugin --safe \
+  --harness-root /path/to/deepseek-harness --json
+
+# Write after confirmation
+dsh-doctor migrate apply /path/to/plugin --safe --yes \
+  --harness-root /path/to/deepseek-harness --json
+```
+
+Apply can split mixed imports, move exact symbols, leave semantic symbols in place, and update development dependencies when the change is known. Every changed file receives a backup.
+
+### 3. Verify
+
+```sh
+dsh-doctor migrate verify /path/to/plugin --level static \
+  --harness-root /path/to/deepseek-harness --json
+dsh-doctor migrate verify /path/to/plugin --level build --yes \
+  --harness-root /path/to/deepseek-harness --json
+dsh-doctor migrate verify /path/to/plugin --level runtime --yes \
+  --harness-root /path/to/deepseek-harness --json
+```
+
+| Level | What it checks |
+|---|---|
+| `static` | Rechecks source, manifest, client graph, patches, and artifacts |
+| `build` | Runs the plugin's existing build/test scripts and scans the output again |
+| `runtime` | Packs the real tarball and checks the target DSH version, installed package, bundle, and effective configuration in a temporary profile |
+
+Verification states are:
+
+```text
+analyzed → source-migrated → artifact-verified → runtime-verified
+```
+
+`runtime-verified` means that packing, installation, and basic activation passed. It does not replace real UI, Service lifecycle, and business-flow testing.
+
+## Diagnose DSH and installed plugins
+
+Global installation:
 
 ```sh
 npm install --global @bruc3van/dsh-doctor
 dsh-doctor diagnose
 ```
 
-Or run without installing:
+Temporary use:
 
 ```sh
 npx @bruc3van/dsh-doctor diagnose
 ```
 
-The default target is `$DSH_HOME/profiles/web`, falling back to `~/.dsh`. Use `--dsh-command /path/to/dsh` for a special installation or `--harness-root /path/to/deepseek-harness` for a source checkout.
-
----
-
-## Plugin migration: 0.1.1 → 0.1.2
-
-### migrate commands
-
-Doctor ships a versioned `dsh-v0.1.1-rc.2 → dsh-v0.1.2-alpha.2` migration catalog and exposes three auditable stages:
-
-```sh
-# Stage 1: read-only analysis of source, type imports, manifest, client graph, and build artifacts
-dsh-doctor migrate analyze /path/to/plugin \
-  --from dsh-v0.1.1-rc.2 \
-  --to dsh-v0.1.2-alpha.2 \
-  --harness-root /path/to/deepseek-harness
-
-# Stage 2: preview exact rewrites; add --yes to write and create timestamped backups
-dsh-doctor migrate apply /path/to/plugin --safe \
-  --harness-root /path/to/deepseek-harness
-dsh-doctor migrate apply /path/to/plugin --safe --yes \
-  --harness-root /path/to/deepseek-harness
-
-# Stage 3: static, build, and isolated runtime verification in order
-dsh-doctor migrate verify /path/to/plugin --level static \
-  --harness-root /path/to/deepseek-harness
-dsh-doctor migrate verify /path/to/plugin --level build --yes \
-  --harness-root /path/to/deepseek-harness
-dsh-doctor migrate verify /path/to/plugin --level runtime --yes \
-  --harness-root /path/to/deepseek-harness
-```
-
-Run `dsh-doctor migrations list` to confirm the CLI contains this exact version pair before starting. Without a local install, `npx --package=@bruc3van/dsh-doctor dsh-doctor migrations list` works the same.
-
-### Stage details
-
-**analyze**: Uses the TypeScript AST so it sees type-only imports that disappear from JavaScript bundles. Also checks package metadata, client graph declarations, and build artifacts. A clean bundle alone does not imply compatibility.
-
-**apply --safe**: Rewrites only catalog-confirmed exact-equivalent symbols, pins non-removed DSH development dependencies to the target version, and creates timestamped backups. It may add dependencies required by exact symbol moves but does not automatically change existing peer ranges. Session, Workspace, Conversation, and pending-interaction ownership changes are left as `MIG_SEMANTIC_API_CHANGE` and are never mechanically replaced.
-
-**verify**:
-
-| Level | What it does |
-|---|---|
-| `static` | Uses the TypeScript AST to inspect source/imports, manifest, client graph, and build artifacts without running project scripts |
-| `build` | Executes plugin build scripts and verifies the artifact (`build` or `pack:check` must succeed; `test`/`typecheck` alone is insufficient proof of a publishable artifact) |
-| `runtime` | Packs the real plugin tarball, installs it under a temporary `DSH_HOME` via the target CLI into a fresh web profile, verifies CLI version, profile manifest, installed package, activated bundle, effective config, and performs an activation smoke; never touches the normal `~/.dsh` |
-
-The highest achievable gate is `analyzed` → `source-migrated` → `artifact-verified` → `runtime-verified`. `runtime-verified` still does not prove real UI, lifecycle, or business behavior. Failed workspaces are retained and reported; successful ones are cleaned up by default.
-
-### Key API changes
-
-`@deepseek-ai/dsh-client-runtime` was removed with **no aggregate replacement**. Capabilities migrate to:
-
-| Concern | 0.1.2 owner | Migration |
-|---|---|---|
-| store engine and equality helpers | `dsh-client-store` | exact (catalog-listed symbols) |
-| Cordis client context type | `@deepseek-ai/cordis` `Context` | exact; preserve local aliases |
-| session control / list / commands | `dsh-api-session-controller/client` | semantic (developer judgment required) |
-| workspace state / commands | `dsh-api-workspace-controller/client` | semantic |
-| conversation assembly | `dsh-client-ui-conversation/client` | semantic |
-| pending-interaction state | domain UI packages aggregated by `ui-session` | semantic |
-
-`@deepseek-ai/dsh-host-apiproxy` was also removed with no compatible substitute. Browser operations use their natural generated Remote owners through API Remotes/API Gateway contributions.
-
-### dsh-plugin-upgrade skill
-
-The package ships the [`dsh-plugin-upgrade` skill](skills/dsh-plugin-upgrade/SKILL.md) so coding agents (such as Claude Code) can drive the full migration workflow without collapsing any safety gate. The skill triggers when a plugin developer asks for migration, compatibility assessment, API replacement, peer dependency updates, artifact rebuilds, or DSH 0.1.2 runtime verification.
-
-Install it directly from the GitHub repository into a supported coding agent:
-
-```sh
-npx skills add bruc3van/dsh-doctor
-```
-
-The repository currently exposes one skill, so the `skills` CLI discovers and installs `dsh-plugin-upgrade`; add `--skill dsh-plugin-upgrade` to select it explicitly. This installs the agent skill, not a global DSH Doctor CLI. The skill checks the local CLI version and target catalog, performs a read-only registry update check with `npm view`, and pins one exact npx version for all three phases when the local CLI is missing, outdated, or lacks the catalog. A global install or update always requires explicit user authorization.
-
----
-
-## Diagnosis
-
-### Diagnosis model
-
-`diagnose` composes the configuration from an empty tree in the same order as current DSH:
-
-```text
-bundle layers → profile cordis.patch.yml → home cordis.patch.yml → CLI overlays
-```
-
-The JSON report retains `currentDefaultTree`, `currentEffectiveTree`, field-level provenance, replaced sources, and paths removed by whole-`config` replacement. It diagnoses:
-
-- stale patches, missing targets, wrong name assertions;
-- duplicate entry ids and duplicate plugin mounts;
-- higher-layer disabling, structural replacement, whole group/config overrides;
-- bundle declaration conflicts with profile activation state;
-- plugin versions, artifacts, client contracts, dependencies, and runtime issues.
-
-Every `pluginDiagnoses[]` object keeps current `status` separate from `recovery`. Being removable does not make an incompatible plugin compatible.
+The default target is `$DSH_HOME/profiles/web`, falling back to `~/.dsh`.
 
 ```sh
 dsh-doctor diagnose
@@ -126,119 +190,53 @@ dsh-doctor diagnose --json
 dsh-doctor diagnose --check-updates
 ```
 
-Only `--check-updates` and `recover` contact the npm registry. Offline diagnosis reports `update.status: "not-checked"` and never turns "not checked" into "no compatible version."
+Diagnosis composes configuration in DSH order:
 
----
+```text
+bundle layers → profile cordis.patch.yml → home cordis.patch.yml → CLI overlays
+```
 
-## Recovery decisions
+It checks plugin versions and peers, Node engines, installation and lockfile state, bundles and patches, client contracts, duplicate mounts, higher-layer overrides, and DSH CLI/Harness version drift. Normal diagnosis does not use the network. Only `--check-updates` and recovery operations contact the npm registry.
 
-### Compatible-version search
-
-Doctor checks all published manifests instead of trusting `latest`, then selects the highest version whose declared peer ranges accept the resolvable active DSH packages. This is a manifest-declared candidate only, not proof from a real startup or UI test.
+## Recovery operations
 
 ```sh
+# Check and install the highest manifest-declared compatible version
 dsh-doctor recover @scope/plugin --action check-update
-dsh-doctor recover @scope/plugin --action update       # preview
-dsh-doctor recover @scope/plugin --action update --yes # exact version
-```
+dsh-doctor recover @scope/plugin --action update
+dsh-doctor recover @scope/plugin --action update --yes
 
-### Quarantine
+# Create a temporary quarantine overlay
+dsh-doctor recover @scope/plugin --action quarantine \
+  --output ./plugin-quarantine.yml
 
-When no compatible release is available, generate and test a temporary overlay first:
-
-```sh
-dsh-doctor recover @scope/plugin --action quarantine
-dsh-doctor recover @scope/plugin --action quarantine --output ./plugin-quarantine.yml
-dsh --profile web --patch ./plugin-quarantine.yml
-```
-
-Doctor only generates an overlay when every active entry is precisely mapped, has a unique non-empty id and an exact name assertion, and the bundle does not rewrite entries owned by another layer. Core bundles, declared client dependents, and plugins statically detected as runtime Service providers with unproven dependents require manual review. The overlay disables all known active entries, causing both host and client sources to exit composition.
-
-After testing the overlay, persistence is separately gated:
-
-```sh
-# Preview the exact diff first
+# Persist it only after testing the temporary overlay
 dsh-doctor recover @scope/plugin --action persist-quarantine --verified
-
-# Write to profile/cordis.patch.yml after explicit confirmation
 dsh-doctor recover @scope/plugin --action persist-quarantine --verified --yes
-```
 
-Persistence appends the final winning profile-layer disable override and refuses the write when a home or CLI overlay would still outrank it. It then recomposes the configuration and verifies every exact target is disabled; failed verification returns a nonzero exit code. The write rechecks SHA-256 and atomically replaces the profile patch. An existing patch gets a `.dsh-doctor-<timestamp>.bak`; a first-time file gets a `.rollback.json` containing its target and created-content hash, enabling deletion rollback only while the file is unchanged.
-
-Preview and explicitly restore that backup or rollback record:
-
-```sh
-dsh-doctor recover @scope/plugin --action rollback-quarantine \
-  --backup /path/to/cordis.patch.yml.dsh-doctor-...bak
-dsh-doctor recover @scope/plugin --action rollback-quarantine \
-  --backup /path/to/cordis.patch.yml.dsh-doctor-...bak --yes
-```
-
-Doctor only accepts timestamped recovery files belonging to the selected profile patch.
-
-### Safe removal
-
-Removal is always explicit and can never be inferred by legacy `--fix --yes`:
-
-```sh
-dsh-doctor recover @scope/plugin --action remove       # impact preview
+# Removal is always separate
+dsh-doctor recover @scope/plugin --action remove
 dsh-doctor recover @scope/plugin --action remove --yes
 ```
 
-Automatic removal requires a direct profile dependency, a readable lockfile, a non-core bundle, no manual mount or dangling patch that would remain, and a working current DSH CLI. Before the official command runs, Doctor saves a redacted diagnostic snapshot and quarantine overlay:
+Before quarantine or removal, Doctor checks entry ownership, configuration layers, direct dependencies, core bundles, lockfile state, manual mounts, and known client dependents. Static checks cannot prove dynamic Service dependencies or external data safety, so restart the profile and test its main features afterwards.
 
-```sh
-dsh plugin --profile web remove @scope/plugin
-```
-
-It then re-diagnoses dependency, bundle-layer, and active-entry absence and reports the exact rollback install command. Static analysis cannot prove the absence of dynamic Service dependencies, external data, or regressions in every real workflow. Restart the profile and validate its main functions after any bundle update or removal.
-
----
-
-## Baselines
-
-Save a baseline before upgrading, then compare plugin versions, compatibility state, Harness state, and finding changes afterwards:
+You can also save and compare a baseline around an upgrade:
 
 ```sh
 dsh-doctor baseline create
 dsh-doctor baseline compare
-
-# Custom path
-dsh-doctor baseline create --output ./before-upgrade.json
-dsh-doctor baseline compare --output ./before-upgrade.json
 ```
-
-The default baseline is `.dsh-doctor/baseline.json` inside the profile. It supplements current evidence and is never required for diagnosis.
-
-## Legacy confirmed repairs
-
-`--fix` and `--repair` remain compatible with deterministic 0.1.x install, update, and bundle-manifest repairs. They never quarantine or remove a plugin. File actions are hash-checked, backed up, and atomically replaced; commands use fixed argv and the selected `DSH_HOME`.
-
-```sh
-dsh-doctor --fix
-dsh-doctor --fix --yes --json
-```
-
----
 
 ## Output and exit codes
 
-Text output supports Chinese and English. `--json` keeps stable English codes and complete non-secret evidence; plugin `config` values and other common secret fields are replaced with `[REDACTED]`.
+Text output supports Chinese and English. `--json` uses stable English codes and keeps redacted structured evidence.
 
 | Exit code | Meaning |
 |---|---|
-| `0` | No blocking error, or an explicit action passed static verification |
-| `1` | A possible startup blocker remains, or recovery verification is incomplete |
-| `2` | Argument, environment, or action execution failure |
-
-## Security boundaries
-
-- Does not execute third-party plugins or evaluate `!!js`; diagnosis parses configuration structure but redacts every plugin `config` value plus other common secret fields from JSON, baselines, and recovery snapshots; text reports do not print configuration values.
-- Registry compatibility is declarative only; it does not prove a real startup or UI test.
-- Dynamic Service dependencies, external side effects, real UI behavior, and business workflows require user validation.
-- Precise patch edits only operate on structures Doctor can safely parse and locate; ambiguous cases are refused automatically.
-- After adding, updating, or removing a bundle, a running profile does not automatically change its bundle set — a restart is required.
+| `0` | No blocker remains, or the action completed and passed its verification |
+| `1` | Compatibility issues, semantic migration, or verification work remains |
+| `2` | Argument, environment, or action-execution failure |
 
 ## Development
 
@@ -248,4 +246,6 @@ npm run check
 npm pack --dry-run
 ```
 
-Publishing uses GitHub Actions OIDC and npm provenance. Local implementation and verification do not commit, tag, or publish automatically.
+Tests cover the CLI, configuration composition, diagnosis, redaction, backups and write protection, AST migration, build gates, isolated runtime verification, and recovery operations. CI tests Node.js `22.19` and `24` on macOS, Ubuntu, and Windows.
+
+Local development, the skill, and the CLI never commit, tag, or publish automatically.

@@ -2,123 +2,187 @@
 
 中文 | [English](README.en.md)
 
-DSH Doctor 是面向 DSH 升级事故的诊断与恢复决策工具。它按插件回答：哪里不兼容、哪层配置造成或放大问题、首选修复是什么，以及暂时修不好时能否安全隔离或删除。
+DSH Doctor 帮助 Agent 诊断和升级 DeepSeek Harness 插件：识别新旧版本之间的 API 变化，修改可以确定迁移的代码，提示需要开发者判断的语义变化，重新构建并验证插件。
 
-这是社区维护的第三方工具，不属于 DeepSeek 官方项目。普通诊断完全只读，也不会加载或执行待检查插件的代码。
+当前主要面向：
 
-## 安装
+```text
+DSH 0.1.1 → DSH 0.1.2
+```
 
-需要 Node.js `22.19+` 或 `24+`：
+项目同时提供 DSH profile 和插件的诊断、兼容版本检查、隔离与删除前检查。
+
+> 这是社区维护的第三方工具，不属于 DeepSeek 官方项目。当前 catalog 以 `dsh-v0.1.1-rc.2` 和 `dsh-v0.1.2-alpha.2` 为基准记录 0.1.1 到 0.1.2 的变化；插件使用其他 patch 或预发布版本时，Agent 仍需核对实际差异。
+
+## 使用 Skill 升级插件
+
+安装仓库中的 [`dsh-plugin-upgrade`](skills/dsh-plugin-upgrade/SKILL.md) Skill：
+
+```sh
+npx skills add bruc3van/dsh-doctor
+```
+
+然后在插件仓库中告诉 Agent：
+
+```text
+请把当前插件从 DSH 0.1.1 升级到 DSH 0.1.2。
+先分析兼容问题，再修改代码，最后完成构建和运行时验证。
+```
+
+Skill 会提醒 Agent 按下面的顺序工作：
+
+1. 检查插件目录、Harness checkout、包管理器和可用的 DSH Doctor；
+2. 分析源码、类型导入、依赖、manifest、client graph、patch 和构建产物；
+3. 预览并应用可以确定等价的代码修改；
+4. 根据新的 API 所有者处理需要理解业务的语义迁移；
+5. 重新构建插件，并依次做静态、构建和隔离运行时验证；
+6. 报告修改内容、剩余问题、备份和实际达到的验证等级。
+
+`npx skills add` 只安装 Agent 指令，不会安装全局 DSH Doctor。Skill 会先检查本地 CLI 和 npm registry；本地版本不合适时，默认使用固定版本的 `npx`，不会自行修改全局 npm 安装。
+
+验证完成后，可以再让 Agent 按插件仓库原有的版本和发布流程提交、打 tag、发布。Skill 本身不会自动提交或发布。
+
+## 工作方式
+
+DSH Doctor 由三部分组成：
+
+- **Skill**：告诉 Agent 升级步骤、哪些操作需要确认，以及最后应该报告什么；
+- **CLI**：扫描插件、生成问题清单、修改确定性代码，并执行分级验证；
+- **Migration catalog**：记录两个 DSH 版本之间已确认的包、API、Service、配置和行为变化。
+
+完整流程是：
+
+```text
+分析问题
+  → 修改确定性代码
+  → Agent 处理语义变化
+  → 重新构建
+  → 静态验证
+  → 临时 profile 安装与激活验证
+  → 按插件自己的流程发布
+```
+
+CLI 只自动修改 catalog 标记为 `exact` 的迁移。Session、Workspace、Conversation、pending interaction 等所有权和生命周期变化会标记为 `MIG_SEMANTIC_API_CHANGE`，由 Agent 结合插件代码处理，不会机械替换。
+
+## 为什么需要版本化规则
+
+DSH 0.1.2 不只是包版本变化，一些能力被拆分到了新的所有者：
+
+- `@deepseek-ai/dsh-client-runtime` 已移除，没有一个新的聚合包可以直接替换；
+- store 能力迁移到 `dsh-client-store`；
+- Session、Workspace、Conversation 和 pending interaction 分别由新的 controller 或 UI 包负责；
+- `@deepseek-ai/dsh-host-apiproxy` 已移除，浏览器调用需要迁移到对应业务 Remote；
+- client graph、platform external、exports 和部分 profile patch target 也发生了变化。
+
+Migration catalog 保存 source/target tag 和 Git commit，并记录 package、symbol、Service 和配置规则。提供 `--harness-root` 时，CLI 还会确认两个 tag 对应的 commit，并比较目标 web profile 中的 entry id。这样 Agent 可以基于明确的版本差异修改代码，而不是猜测新 API。
+
+## 覆盖范围
+
+| 检查内容 | Doctor/Agent 如何处理 |
+|---|---|
+| JS/TS import，包括 `import type`、别名和混合 import | 使用 TypeScript AST 分析；确定等价的 symbol 可自动改写 |
+| 移除或新增的 DSH 包 | 检查源码和 manifest；没有残留引用时更新依赖 |
+| DSH/Cordis 版本范围 | 检查 dependencies、devDependencies 和 peerDependencies；不自动扩大已有 peer 范围 |
+| Session、Workspace、Conversation 等语义变化 | 报告新 owner 和变化原因，由 Agent 修改业务代码 |
+| `dsh.client` 和 client export | 检查 inject、external、platform、immediately 和 `exports["./client"]` |
+| Harness patch target | 有精确 Harness checkout 时比较新旧 entry |
+| 构建产物 | 检查 `lib`、`dist`、`build`、`out` 中是否仍包含旧 API |
+| 插件构建 | 运行项目已有的 typecheck、build、test、pack:check；必须有 build 或 pack:check 才算产物已验证 |
+| 安装和激活 | 打包真实 tarball，安装到临时 `DSH_HOME` 的新 web profile 中验证 |
+| UI 和业务行为 | Doctor 不自动判断；需要 Agent 或开发者执行插件自己的测试 |
+
+源码分析使用 TypeScript AST，并同时检查 manifest、client graph 和构建产物。因此，bundle 中没有旧字符串并不代表源码已经兼容，源码编译通过也不代表发布产物和运行时已经兼容。
+
+## 安全性
+
+- `diagnose`、`migrate analyze` 和静态验证只读，不加载或执行待检查插件；
+- `migrate apply` 必须带 `--safe`，没有 `--yes` 时只展示将要修改的内容；
+- 只有 `exact` 迁移会自动改代码，语义变化不会自动猜测；
+- 写入前检查文件 SHA-256，预览后文件发生变化会拒绝写入；
+- 修改已有文件前创建时间戳备份，并使用临时文件原子替换；
+- build 和 runtime 会执行插件脚本，因此必须显式使用 `--yes`；
+- runtime 使用临时 `DSH_HOME`，不会安装到正常的 `~/.dsh`；
+- JSON、baseline 和恢复快照会脱敏插件配置和常见 secret/token/password/key 字段；
+- 全局 CLI 安装、持久隔离、删除插件和发布都不会由 Skill 自动执行。
+
+## 手动使用迁移 CLI
+
+需要 Node.js `^22.19.0` 或 `>=24.0.0`。
+
+先确认 CLI 包含需要的迁移：
+
+```sh
+npx --yes --package=@bruc3van/dsh-doctor@0.5.3 \
+  dsh-doctor migrations list
+```
+
+### 1. 分析
+
+```sh
+dsh-doctor migrate analyze /path/to/plugin \
+  --from dsh-v0.1.1-rc.2 \
+  --to dsh-v0.1.2-alpha.2 \
+  --harness-root /path/to/deepseek-harness \
+  --json
+```
+
+分析会检查源码、依赖、manifest、client graph、patch target 和已有构建产物，不执行插件代码。
+
+### 2. 修改
+
+```sh
+# 预览
+dsh-doctor migrate apply /path/to/plugin --safe \
+  --harness-root /path/to/deepseek-harness --json
+
+# 确认后写入
+dsh-doctor migrate apply /path/to/plugin --safe --yes \
+  --harness-root /path/to/deepseek-harness --json
+```
+
+Apply 可以拆分混合 import、移动精确 symbol、保留语义 symbol，并更新确定可以调整的开发依赖。每个被修改的文件都会保留备份。
+
+### 3. 验证
+
+```sh
+dsh-doctor migrate verify /path/to/plugin --level static \
+  --harness-root /path/to/deepseek-harness --json
+dsh-doctor migrate verify /path/to/plugin --level build --yes \
+  --harness-root /path/to/deepseek-harness --json
+dsh-doctor migrate verify /path/to/plugin --level runtime --yes \
+  --harness-root /path/to/deepseek-harness --json
+```
+
+| 级别 | 验证内容 |
+|---|---|
+| `static` | 再次检查源码、manifest、client graph、patch 和产物 |
+| `build` | 运行插件已有的构建与测试脚本，并在构建后重新扫描产物 |
+| `runtime` | 打真实 tarball，在临时 profile 中验证目标 DSH 版本、安装包、bundle 和生效配置 |
+
+验证状态依次是：
+
+```text
+analyzed → source-migrated → artifact-verified → runtime-verified
+```
+
+`runtime-verified` 只表示插件能够完成打包、安装和基本激活，仍不能代替真实 UI、Service 生命周期和业务流程验证。
+
+## DSH 和已安装插件诊断
+
+全局安装：
 
 ```sh
 npm install --global @bruc3van/dsh-doctor
 dsh-doctor diagnose
 ```
 
-也可以临时运行：
+临时运行：
 
 ```sh
 npx @bruc3van/dsh-doctor diagnose
 ```
 
-默认检查 `$DSH_HOME/profiles/web`；未设置 `DSH_HOME` 时使用 `~/.dsh`。特殊安装可用 `--dsh-command /path/to/dsh` 指定实际 CLI，源码工作区可用 `--harness-root /path/to/deepseek-harness`。
-
----
-
-## 插件迁移：0.1.1 → 0.1.2
-
-### migrate 命令
-
-Doctor 内置 `dsh-v0.1.1-rc.2 → dsh-v0.1.2-alpha.2` 的版本化迁移目录，并把升级拆成三个可审计阶段：
-
-```sh
-# 阶段 1：只读分析源码、类型导入、manifest、client graph 与构建产物
-dsh-doctor migrate analyze /path/to/plugin \
-  --from dsh-v0.1.1-rc.2 \
-  --to dsh-v0.1.2-alpha.2 \
-  --harness-root /path/to/deepseek-harness
-
-# 阶段 2：预览精确改写；加 --yes 才写入并创建时间戳备份
-dsh-doctor migrate apply /path/to/plugin --safe \
-  --harness-root /path/to/deepseek-harness
-dsh-doctor migrate apply /path/to/plugin --safe --yes \
-  --harness-root /path/to/deepseek-harness
-
-# 阶段 3：依次完成静态、构建和隔离运行时验证
-dsh-doctor migrate verify /path/to/plugin --level static \
-  --harness-root /path/to/deepseek-harness
-dsh-doctor migrate verify /path/to/plugin --level build --yes \
-  --harness-root /path/to/deepseek-harness
-dsh-doctor migrate verify /path/to/plugin --level runtime --yes \
-  --harness-root /path/to/deepseek-harness
-```
-
-可用 `dsh-doctor migrations list` 确认当前 CLI 包含所需版本对；如未安装，`npx --package=@bruc3van/dsh-doctor dsh-doctor migrations list` 也可完成确认。
-
-### 各阶段说明
-
-**analyze**：使用 TypeScript AST 扫描，能识别不会出现在 JavaScript bundle 中的 `import type`；同时检查 package 元数据、client graph 声明和构建产物，不因 bundle 干净就推断兼容。
-
-**apply --safe**：只迁移 catalog 标记为精确等价的符号，将非移除的 DSH 开发依赖固定到目标版本，并创建时间戳备份。可能补充精确符号迁移所需的新依赖，但不会自动修改已有 peer 范围。Session、Workspace、Conversation 和 pending interaction 属于所有权及生命周期变化，保留为 `MIG_SEMANTIC_API_CHANGE`，不做机械替换。
-
-**verify**：
-
-| 级别 | 执行内容 |
-|---|---|
-| `static` | 使用 TypeScript AST 检查源码/import、manifest、client graph 与构建产物，不执行项目脚本 |
-| `build` | 执行插件构建脚本，验证产物（需 `build` 或 `pack:check` 成功；仅有 `test`/`typecheck` 不足以证明发布产物） |
-| `runtime` | 打真实 tarball，在临时 `DSH_HOME` 中通过目标 CLI 安装到全新 web profile，核验 CLI 版本、profile manifest、已安装包、bundle 激活与有效配置，执行激活 smoke；不触碰普通用户的 `~/.dsh` |
-
-最高状态为 `analyzed` → `source-migrated` → `artifact-verified` → `runtime-verified`。`runtime-verified` 仍不能替代真实 UI、生命周期与业务行为的验证。失败现场会保留并报告路径；成功后默认清理。
-
-### 主要 API 变化
-
-`@deepseek-ai/dsh-client-runtime` 已移除，**没有聚合替代包**，各能力迁往：
-
-| 原能力 | 0.1.2 归属 | 迁移方式 |
-|---|---|---|
-| store 引擎与 equality helpers | `dsh-client-store` | 精确（catalog 已列举符号） |
-| Cordis 客户端 context 类型 | `@deepseek-ai/cordis` `Context` | 精确；保留本地别名 |
-| session 控制/列表/命令 | `dsh-api-session-controller/client` | 语义（需开发者判断） |
-| workspace 状态/命令 | `dsh-api-workspace-controller/client` | 语义 |
-| conversation 组装 | `dsh-client-ui-conversation/client` | 语义 |
-| pending interaction 状态 | ui-session 聚合的各 UI 包 | 语义 |
-
-`@deepseek-ai/dsh-host-apiproxy` 也已移除，无兼容替代，浏览器操作改用 API Remotes/API Gateway 原生 Remote 所有者。
-
-### dsh-plugin-upgrade skill
-
-包内同时提供 [`dsh-plugin-upgrade` skill](skills/dsh-plugin-upgrade/SKILL.md)，供编码 Agent（如 Claude Code）驱动完整迁移流程，确保不折叠任何安全阶段门控。Skill 描述触发条件：插件开发者寻求迁移、兼容性评估、API 替换、peer 依赖更新、产物重建或 DSH 0.1.2 运行时验证。
-
-可直接从 GitHub 仓库安装到本机支持的编码 Agent：
-
-```sh
-npx skills add bruc3van/dsh-doctor
-```
-
-仓库当前只提供一个 skill，`skills` CLI 会发现并安装 `dsh-plugin-upgrade`；需要显式选择时可加 `--skill dsh-plugin-upgrade`。该命令只安装 Agent skill，不会全局安装 DSH Doctor CLI。Skill 会检查本地 CLI 版本和目标 catalog，通过只读 `npm view` 检查 registry 更新；本地 CLI 缺失、过期或缺少 catalog 时，默认固定一个精确版本并通过 `npx` 完成三阶段。全局安装或更新始终需要用户明确授权。
-
----
-
-## 诊断
-
-### 诊断模型
-
-`diagnose` 从空树开始，按当前 DSH 的正式顺序组合配置：
-
-```text
-bundle layers → profile cordis.patch.yml → home cordis.patch.yml → CLI overlays
-```
-
-JSON 同时保留 `currentDefaultTree`、`currentEffectiveTree`、字段级来源、被替换来源和 `config` 整体替换时丢失的字段路径。重点识别：
-
-- 旧 patch、缺失 target、错误 name assertion；
-- 重复 entry id、重复插件 mount；
-- 高层禁用、结构替换、group/config 整体覆盖；
-- bundle 声明与 profile 激活状态冲突；
-- 插件版本、产物、client contract、依赖与运行环境问题。
-
-每个 `pluginDiagnoses[]` 都把当前 `status` 与可选 `recovery` 分开。插件即使能够隔离或删除，也不会因此被标记为已经兼容。
+默认检查 `$DSH_HOME/profiles/web`；未设置 `DSH_HOME` 时使用 `~/.dsh`。
 
 ```sh
 dsh-doctor diagnose
@@ -126,121 +190,55 @@ dsh-doctor diagnose --json
 dsh-doctor diagnose --check-updates
 ```
 
-只有 `--check-updates` 和 `recover` 会访问 npm registry。离线诊断只报告 `update.status: "not-checked"`，绝不会把"未检查"写成"没有兼容版本"。
+诊断按 DSH 的顺序组合配置：
 
----
+```text
+bundle layers → profile cordis.patch.yml → home cordis.patch.yml → CLI overlays
+```
 
-## 恢复决策
+它会检查插件版本和 peer、Node engines、安装与 lockfile、bundle 与 patch、client contract、重复 mount、高层配置覆盖，以及 DSH CLI/Harness 版本漂移。普通诊断不访问网络；只有 `--check-updates` 和 recovery 操作会访问 npm registry。
 
-### 兼容版本检查
-
-Doctor 会检查所有已发布版本的 manifest，而不是只看 `latest`，并选出声明兼容当前可解析 DSH package 版本的最高版本。结论仅表示"manifest 声明兼容的候选版本"，不代表已经通过真实启动或 UI 验证。
+## 恢复操作
 
 ```sh
+# 检查和安装 manifest 声明兼容的最高版本
 dsh-doctor recover @scope/plugin --action check-update
-dsh-doctor recover @scope/plugin --action update       # 只预览
-dsh-doctor recover @scope/plugin --action update --yes # 执行精确版本
-```
+dsh-doctor recover @scope/plugin --action update
+dsh-doctor recover @scope/plugin --action update --yes
 
-### 临时与持久隔离
+# 生成临时隔离 overlay
+dsh-doctor recover @scope/plugin --action quarantine \
+  --output ./plugin-quarantine.yml
 
-没有兼容版本时，默认先生成临时 overlay，再用实际 profile 验证其余功能：
-
-```sh
-dsh-doctor recover @scope/plugin --action quarantine
-dsh-doctor recover @scope/plugin --action quarantine --output ./plugin-quarantine.yml
-dsh --profile web --patch ./plugin-quarantine.yml
-```
-
-只有所有活跃 entry 均能精确定位、都有唯一非空 id、name assertion 明确，且 bundle 没有改写其他来源 entry 时，Doctor 才会生成 overlay。核心 bundle、存在 client 依赖者或静态检测到提供运行时 Service 但无法证明依赖关系的插件都要求人工审查。overlay 会禁用插件所有已知活跃 entry，使 host 与 client 来源同时退出组合。
-
-验证完成后才可持久化：
-
-```sh
-# 先预览精确差异
+# 验证临时 overlay 后持久化
 dsh-doctor recover @scope/plugin --action persist-quarantine --verified
-
-# 明确确认后写入 profile/cordis.patch.yml
 dsh-doctor recover @scope/plugin --action persist-quarantine --verified --yes
+
+# 删除始终需要单独执行
+dsh-doctor recover @scope/plugin --action remove
+dsh-doctor recover @scope/plugin --action remove --yes
 ```
 
-持久写入会追加 profile 层最终生效的禁用覆盖；如果 home 或 CLI overlay 等更高层仍会覆盖它，Doctor 会在写入前拒绝。写入后重新组合配置并逐个验证目标 entry 确实处于 disabled 状态；验证失败会返回非零退出码。写入前重新校验 SHA-256 并原子替换文件。已有 patch 会创建 `.dsh-doctor-<timestamp>.bak`；首次新建 patch 会创建 `.rollback.json`，其中记录目标文件和创建内容哈希，以便只在文件未被再次修改时执行删除式回滚。
+Doctor 会在隔离和删除前检查 entry、配置层、直接依赖、核心 bundle、lockfile、手工 mount 和已知 client dependents。静态检查无法确认动态 Service 依赖和外部数据，操作后仍需重启 profile 并验证主要功能。
 
-可先预览并显式恢复备份或回滚记录：
-
-```sh
-dsh-doctor recover @scope/plugin --action rollback-quarantine \
-  --backup /path/to/cordis.patch.yml.dsh-doctor-...bak
-dsh-doctor recover @scope/plugin --action rollback-quarantine \
-  --backup /path/to/cordis.patch.yml.dsh-doctor-...bak --yes
-```
-
-Doctor 只接受属于当前 profile patch 的时间戳恢复文件。
-
-### 安全删除
-
-删除是独立动作，永远不会由通用 `--fix --yes` 推断：
-
-```sh
-dsh-doctor recover @scope/plugin --action remove       # 只做影响预检
-dsh-doctor recover @scope/plugin --action remove --yes # 显式执行
-```
-
-自动删除要求插件是 profile 直接依赖、不是模板/内置核心 bundle、lockfile 可读、没有会残留的手工 mount 或 dangling patch，并且当前 DSH CLI 可用。执行前会保存已脱敏的诊断快照和临时 quarantine overlay，再调用官方命令：
-
-```sh
-dsh plugin --profile web remove @scope/plugin
-```
-
-成功后重新诊断并分别验证 dependency、bundle layer 和活跃 entry 已消失，同时保留原版本的精确回滚安装命令。静态检查无法证明不存在动态 Service 依赖、外部数据残留或所有真实业务流程都正常；完成后仍须重启 profile 并验证主要功能。
-
----
-
-## 历史基线
-
-升级前保存基线，升级后比较插件版本、兼容状态、Harness 与 finding 变化：
+升级前后也可以保存和比较基线：
 
 ```sh
 dsh-doctor baseline create
 dsh-doctor baseline compare
-
-# 自定义基线路径
-dsh-doctor baseline create --output ./before-upgrade.json
-dsh-doctor baseline compare --output ./before-upgrade.json
 ```
-
-默认基线位于 profile 的 `.dsh-doctor/baseline.json`。基线用于差异归因，不是当前诊断的前提，也不会覆盖当前现场证据。
-
-## 旧版确认式修复
-
-`--fix` / `--repair` 继续兼容 0.1.x 的确定性 install、update 与 bundle manifest 修复，不会触发 quarantine、持久化隔离或删除。文件动作展示路径并创建备份，命令使用固定 argv、绑定当前 `DSH_HOME`，任一步失败都会停止后续动作。
-
-```sh
-dsh-doctor --fix
-dsh-doctor --fix --yes --json
-```
-
----
 
 ## 输出与退出码
 
-文本支持中文和英文，优先级为 `--lang`、`DSH_DOCTOR_LANG`、DSH 设置和系统 locale。`--json` 始终保留稳定英文 code 和完整的非秘密证据；插件 `config` 值和其他常见秘密字段会替换为 `[REDACTED]`。
+文本支持中文和英文，`--json` 使用稳定英文 code 并保留脱敏后的结构化证据。
 
 | 退出码 | 含义 |
 |---|---|
-| `0` | 没有阻断错误，或显式动作成功且静态验证通过 |
-| `1` | 仍有可能阻断启动的问题，或恢复后静态状态不完整 |
-| `2` | 参数、运行环境或动作执行失败 |
+| `0` | 没有阻断错误，或操作完成并通过对应验证 |
+| `1` | 仍有兼容问题、语义迁移或验证未完成 |
+| `2` | 参数、运行环境或操作执行失败 |
 
-## 安全边界
-
-- 不执行第三方插件，不求值 `!!js`；诊断会解析配置结构，但 JSON、baseline 和恢复快照会脱敏所有插件 `config` 值及其他常见秘密字段，文本报告也不打印配置值；
-- registry 结果只证明 manifest 声明，不证明真实运行兼容；
-- 动态 Service 依赖、外部副作用、真实 UI 和业务流程需要用户验证；
-- patch 精确编辑只处理 Doctor 能安全解析和定位的结构；有歧义时拒绝自动操作；
-- 添加、更新或删除 bundle 后，运行中的 profile 不会自动改变 bundle 集合，必须重启。
-
-## 从源码开发
+## 开发
 
 ```sh
 npm install
@@ -248,4 +246,6 @@ npm run check
 npm pack --dry-run
 ```
 
-发布仍使用 GitHub Actions OIDC 与 npm provenance；本地实现和验证不会自动提交、打 tag 或发布。
+测试覆盖 CLI、配置组合、诊断、脱敏、备份与写入保护、AST 迁移、构建门控、隔离运行时验证和恢复操作。CI 在 macOS、Ubuntu 和 Windows 上测试 Node.js `22.19` 与 `24`。
+
+本地开发、Skill 和 CLI 都不会自动提交代码、创建 tag 或发布版本。

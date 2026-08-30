@@ -1,12 +1,13 @@
 ---
 name: dsh-plugin-upgrade
-description: Upgrade a DeepSeek Harness plugin from dsh-v0.1.1-rc.2 to dsh-v0.1.2-alpha.2 with dsh-doctor. Use when a plugin developer asks to migrate, assess compatibility, replace removed dsh-client-runtime or dsh-host-apiproxy APIs, update DSH peer dependencies, rebuild artifacts, or verify a plugin against DSH 0.1.2. Produces an evidence-backed staged report and applies only catalog-confirmed exact rewrites automatically.
+description: Help diagnose and upgrade a DeepSeek Harness plugin from DSH 0.1.1 to 0.1.2 with dsh-doctor. Use when a plugin developer asks to assess compatibility, identify changed APIs, replace removed dsh-client-runtime or dsh-host-apiproxy usage, update DSH dependencies, modify plugin code, rebuild artifacts, or verify the plugin before releasing a new version. Apply only catalog-confirmed exact rewrites automatically, guide semantic code changes, and report what still needs developer verification. The current catalog uses dsh-v0.1.1-rc.2 and dsh-v0.1.2-alpha.2 as its reference points.
 ---
 
-# DSH plugin upgrade
+# Upgrade a DSH 0.1.1 plugin to 0.1.2
 
-Upgrade one plugin at a time. Treat source migration, artifact verification, runtime activation, and business behavior as separate gates.
-This skill is intentionally bound to the `dsh-v0.1.1-rc.2` to `dsh-v0.1.2-alpha.2` catalog; do not reuse its mappings for another version pair.
+Help the developer diagnose and modify one plugin at a time. Treat source migration, artifact verification, runtime activation, and business behavior as separate gates.
+
+The current migration knowledge covers the DSH 0.1.1 to 0.1.2 transition. Its CLI catalog records `dsh-v0.1.1-rc.2` and `dsh-v0.1.2-alpha.2` as the exact reference points used to derive and verify known changes. Use those refs in dsh-doctor commands, but first record the plugin's actual DSH ranges and requested target. When another patch or prerelease is involved, use the catalog for known changes only and report that the additional version difference still needs review. Do not claim that the catalog proves an unlisted version combination.
 
 ## Inputs
 
@@ -14,11 +15,12 @@ Determine:
 
 - the plugin repository root;
 - the DSH Harness checkout when available;
+- the plugin's actual DSH dependency and peer ranges, and the requested 0.1.2 target;
 - whether the developer authorizes writes and project command execution;
 - whether the developer authorizes a global CLI install or update;
 - the plugin's package manager and build scripts.
 
-Use these fixed refs unless the user explicitly requests a supported alternative:
+Use these catalog reference points in the current CLI commands:
 
 - source: `dsh-v0.1.1-rc.2`
 - target: `dsh-v0.1.2-alpha.2`
@@ -88,6 +90,10 @@ On failure, preserve and report the temporary directory. On success, the CLI rem
 
 Runtime activation is not business-behavior proof. Finish with targeted manual or automated checks for visible UI, service lifecycle, event subscriptions, cleanup, configuration, and plugin-specific workflows.
 
+## Prepare for release when requested
+
+Verification prepares the plugin for release but does not publish it. If the developer explicitly asks to release the upgraded plugin, first follow the repository's own release instructions and confirm that required semantic and behavior checks are complete. Then update the plugin version and changelog, inspect the packed artifact, and use the repository's existing commit, tag, publish, and registry-verification workflow. Do not commit, tag, or publish merely because the migration skill was installed or run.
+
 ## Report the outcome
 
 State the highest achieved gate exactly:
@@ -100,3 +106,4 @@ State the highest achieved gate exactly:
 
 Do not call the plugin compatible while errors, semantic tasks, stale artifacts, or required behavior checks remain. Include backups and retained temporary directories in the handoff.
 Also report the selected DSH Doctor version and source (`local`, exact-version `npx`, or explicitly authorized global install), the registry version observed at bootstrap, and whether update status was current, outdated, missing, or unknown.
+Report the plugin's actual source/target version evidence separately from the catalog reference refs. State whether the plugin is ready for its normal release process; if a release was explicitly requested and completed, include the commit, tag, registry, and release verification evidence.
