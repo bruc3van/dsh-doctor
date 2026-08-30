@@ -2,9 +2,9 @@
 
 中文 | [English](README.en.md)
 
-DSH Doctor 面向 DSH 与插件使用者，帮助快速找出导致 DSH 启动异常或升级后不可用的插件，集中说明每个插件的问题、影响与处理方式，并检查常见的 profile 配置和版本漂移。诊断默认完全只读；只有显式使用 `--fix`、核对并确认精确的修复计划后才会执行，文件修改会先创建备份。
+DSH Doctor 是面向 DSH 升级事故的诊断与恢复决策工具。它按插件回答：哪里不兼容、哪层配置造成或放大问题、首选修复是什么，以及暂时修不好时能否安全隔离或删除。
 
-这是社区维护的第三方工具，不属于 DeepSeek 官方项目。它不会加载或执行待检查插件的代码。
+这是社区维护的第三方工具，不属于 DeepSeek 官方项目。普通诊断完全只读，也不会加载或执行待检查插件的代码。
 
 ## 安装
 
@@ -12,132 +12,150 @@ DSH Doctor 面向 DSH 与插件使用者，帮助快速找出导致 DSH 启动�
 
 ```sh
 npm install --global @bruc3van/dsh-doctor
-dsh-doctor
+dsh-doctor diagnose
 ```
 
 也可以临时运行：
 
 ```sh
-npx @bruc3van/dsh-doctor
+npx @bruc3van/dsh-doctor diagnose
 ```
 
-默认检查 `$DSH_HOME/profiles/web`；未设置 `DSH_HOME` 时使用 `~/.dsh`。
+默认检查 `$DSH_HOME/profiles/web`；未设置 `DSH_HOME` 时使用 `~/.dsh`。特殊安装可用 `--dsh-command /path/to/dsh` 指定实际 CLI，源码工作区可用 `--harness-root /path/to/deepseek-harness`。
 
-Doctor 不要求 `dsh` 必须是全局命令。它会按顺序查找 `--dsh-command` 或 `DSH_DOCTOR_DSH_COMMAND` 指定的命令、显式 `--harness-root` 中的 CLI、profile 共享安装或 npx 缓存留下的链接、当前项目安装、PATH，最后是自动识别出的 Harness 源码工作区。DSH Desktop 内置运行时或其他特殊安装可以通过 `--dsh-command /path/to/dsh`（也接受官方包的 `lib/bin.js`）明确指定。找不到 CLI 时仍会完成只读诊断，但不会提供或执行无法验证的命令型修复。
+## 0.4.0 的诊断模型
 
-## 工作方式
+`diagnose` 从空树开始，按当前 DSH 的正式顺序组合：
 
-一次完整流程分为四步：
-
-1. `dsh-doctor` 只读检查当前 DSH Home、profile、插件和 Harness 版本。
-2. Doctor 按错误、警告和插件兼容状态展示证据与建议。
-3. `dsh-doctor --fix` 先展示精确的文件修改或 DSH 命令计划，并等待用户确认。
-4. 修复完成后自动重新诊断，以最终状态决定退出码。
-
-Doctor 不会加载待检查插件，也不会在普通诊断时修改配置。无法确定正确结果的操作，例如猜测凭据、重写损坏 YAML 或直接移除插件，只会给出建议。
-
-## 输出语言
-
-文本输出支持中文和英文。默认依次读取：
-
-1. `--lang zh|en`
-2. `DSH_DOCTOR_LANG`
-3. 当前 DSH Home 中 `settings.yaml` 的 `locale.preference`
-4. 终端或系统 locale
-
-```sh
-dsh-doctor --lang zh
-dsh-doctor --lang en
-DSH_DOCTOR_LANG=zh dsh-doctor
+```text
+bundle layers → profile cordis.patch.yml → home cordis.patch.yml → CLI overlays
 ```
 
-`--json` 始终保留稳定的英文消息与诊断 code，避免语言变化破坏脚本。
+JSON 同时保留 `currentDefaultTree`、`currentEffectiveTree`、字段级来源、被替换来源和 `config` 整体替换时丢失的字段路径。重点识别：
 
-## DSH 升级后的插件兼容性
+- 旧 patch、缺失 target、错误 name assertion；
+- 重复 entry id、重复插件 mount；
+- 高层禁用、结构替换、group/config 整体覆盖；
+- bundle 声明与 profile 激活状态冲突；
+- 插件版本、产物、client contract、依赖与运行环境问题。
 
-DSH 更新后，Doctor 会把每个 profile 插件归入一个明确状态，并在文本与 JSON 报告中汇总：
-
-- `incompatible`：已经发现会阻断插件加载或 Harness 启动的错误，例如插件未安装，或注入了已删除的 client runtime。
-- `risk`：发现当前版本风险，例如 Harness peer range 不接受新版本、仍依赖已删除的 DSH 包、Node.js 不兼容，或安装版本发生漂移。
-- `unknown`：插件没有通过 `peerDependencies` 声明 Harness 兼容范围，或声明对应的当前 package 版本无法解析；Doctor 无法证明它支持升级后的 DSH，但不会把未知误报成故障。
-- `compatible`：插件声明的兼容范围接受当前 Harness，且没有发现插件相关错误或警告。
-
-兼容性检查覆盖所有 profile 直接插件，不再只检查带 `dsh.client` 的前端插件；纯 bundle 或服务端插件引用旧 Harness API 也会被报告。建议 DSH 升级后先运行一次 `dsh-doctor`，再根据精确的 update 建议决定是否执行 `dsh-doctor --fix`。
-
-## 常用命令
+每个 `pluginDiagnoses[]` 都把当前 `status` 与可选 `recovery` 分开。插件即使能够隔离或删除，也不会因此被标记为已经兼容。
 
 ```sh
-# 只读诊断
-dsh-doctor
-dsh-doctor --profile web
-dsh-doctor --home /path/to/.dsh
-dsh-doctor --dsh-command /path/to/@deepseek-ai/dsh/lib/bin.js
+dsh-doctor diagnose
+dsh-doctor diagnose --json
+dsh-doctor diagnose --check-updates
+```
 
-# 机器可读的只读报告，不显示提示
-dsh-doctor --json
+只有 `--check-updates` 和 `recover` 会访问 npm registry。离线诊断只报告 `update.status: "not-checked"`，绝不会把“未检查”写成“没有兼容版本”。
 
-# 展示修复计划，确认后实施并重新诊断
+## 兼容版本检查
+
+Doctor 会检查所有已发布版本的 manifest，而不是只看 `latest`，并选出声明兼容当前可解析 DSH package 版本的最高版本。结论仅表示“manifest 声明兼容的候选版本”，不代表已经通过真实启动或 UI 验证。更新始终绑定精确版本：
+
+```sh
+dsh-doctor recover @scope/plugin --action check-update
+dsh-doctor recover @scope/plugin --action update       # 只预览
+dsh-doctor recover @scope/plugin --action update --yes # 执行精确版本
+```
+
+## 临时与持久隔离
+
+没有兼容版本时，默认先生成临时 overlay，再用实际 profile 验证其余功能：
+
+```sh
+dsh-doctor recover @scope/plugin --action quarantine
+dsh-doctor recover @scope/plugin --action quarantine --output ./plugin-quarantine.yml
+dsh --profile web --patch ./plugin-quarantine.yml
+```
+
+只有所有活跃 entry 均能精确定位、都有唯一非空 id、name assertion 明确，且 bundle 没有改写其他来源 entry 时，Doctor 才会生成 overlay。核心 bundle、存在 client 依赖者或静态检测到提供运行时 Service 但无法证明依赖关系的插件都要求人工审查。overlay 会禁用插件所有已知活跃 entry，使 host 与 client 来源同时退出组合。
+
+验证完成后才可持久化：
+
+```sh
+# 先预览精确差异
+dsh-doctor recover @scope/plugin --action persist-quarantine --verified
+
+# 明确确认后写入 profile/cordis.patch.yml
+dsh-doctor recover @scope/plugin --action persist-quarantine --verified --yes
+```
+
+持久写入会追加 profile 层最终生效的禁用覆盖；如果 home 或 CLI overlay 等更高层仍会覆盖它，Doctor 会在写入前拒绝。写入后重新组合配置并逐个验证目标 entry 确实处于 disabled 状态；验证失败会返回非零退出码。写入前重新校验 SHA-256 并原子替换文件。已有 patch 会创建 `.dsh-doctor-<timestamp>.bak`；首次新建 patch 会创建 `.rollback.json`，其中记录目标文件和创建内容哈希，以便只在文件未被再次修改时执行删除式回滚。旧的 `disabled: true` 不会自动过期，所以插件升级后应重新诊断并决定是否撤销。
+
+可先预览并显式恢复该次备份或回滚记录；Doctor 只接受属于当前 profile patch 的时间戳恢复文件：
+
+```sh
+dsh-doctor recover @scope/plugin --action rollback-quarantine --backup /path/to/cordis.patch.yml.dsh-doctor-...bak
+dsh-doctor recover @scope/plugin --action rollback-quarantine --backup /path/to/cordis.patch.yml.dsh-doctor-...bak --yes
+# 首次新建时，把上面的 .bak 换成命令返回的 .rollback.json
+```
+
+## 安全删除
+
+删除是独立动作，永远不会由通用 `--fix --yes` 推断：
+
+```sh
+dsh-doctor recover @scope/plugin --action remove       # 只做影响预检
+dsh-doctor recover @scope/plugin --action remove --yes # 显式执行
+```
+
+自动删除要求插件是 profile 直接依赖、不是模板/内置核心 bundle、lockfile 可读、没有会残留的手工 mount 或 dangling patch，并且当前 DSH CLI 可用。执行前会保存已脱敏的诊断快照和临时 quarantine overlay，再调用官方命令：
+
+```sh
+dsh plugin --profile web remove @scope/plugin
+```
+
+成功后重新诊断并分别验证 dependency、bundle layer 和活跃 entry 已消失，同时保留原版本的精确回滚安装命令。静态检查无法证明不存在动态 Service 依赖、外部数据残留或所有真实业务流程都正常；完成后仍须重启 profile 并验证主要功能。
+
+## 历史基线
+
+升级前保存基线，升级后比较插件版本、兼容状态、Harness 与 finding 变化：
+
+```sh
+dsh-doctor baseline create
+dsh-doctor baseline compare
+
+# 自定义基线路径
+dsh-doctor baseline create --output ./before-upgrade.json
+dsh-doctor baseline compare --output ./before-upgrade.json
+```
+
+默认基线位于 profile 的 `.dsh-doctor/baseline.json`。基线用于差异归因，不是当前诊断的前提，也不会覆盖当前现场证据。
+
+## 旧版确认式修复
+
+`--fix` / `--repair` 继续兼容 0.1.x 的确定性 install、update 与 bundle manifest 修复：
+
+```sh
 dsh-doctor --fix
-
-# 自动化环境中显式确认当前计划
 dsh-doctor --fix --yes --json
 ```
 
-`--repair` 是 `--fix` 的别名。`--yes` 只有和 `--fix` 一起使用才有效。
+它不会触发 quarantine、持久化隔离或删除。文件动作展示路径并创建备份，命令使用固定 argv、绑定当前 `DSH_HOME`，任一步失败都会停止后续动作。
 
-## 当前检查范围
+## 输出与退出码
 
-- profile `package.json` 的 JSON 根结构、依赖表、bundle 列表和 reload 生命周期
-- profile、home 和 bundle 的 `cordis.patch.yml` 语法与顶层结构，包括 `!!js` 表达式
-- `settings.yaml` 和 `.credentials.yaml` 的安全结构检查；凭据诊断不输出秘密值
-- profile 依赖、bundle 声明、patch 文件和 client bundle 是否存在
-- profile `package.json`、`pnpm-lock.yaml` importer 与实际安装版本是否一致
-- 所有直接插件（包括纯 bundle/服务端插件）的 Node.js `engines`、Harness peer range、旧 DSH 依赖与当前运行时是否兼容
-- 当前 DSH CLI、Harness 工作区和 profile 顶层 `@deepseek-ai/dsh-*` 包是否发生版本漂移或残留
-- `dsh.client` 的 `platform`、`immediately`、`inject`、`external` 和 `./client` export contract
-- client bundle 中字面量 `require()` 与 external/module supplier 的一致性
-- 已删除的 Harness client package 引用
-- 第三方插件 peer range 与当前 Harness 实际版本的兼容性
-- Harness installation 优先于 profile 同名 bundle 的真实解析顺序
-- 按 Harness 官方层级顺序静态组合 bundle、profile 和 home patch，检查缺失 target、错误 group insert 与 name assertion；不会加载插件
+文本支持中文和英文，优先级为 `--lang`、`DSH_DOCTOR_LANG`、DSH 设置和系统 locale。`--json` 始终保留稳定英文 code 和完整的非秘密证据；插件 `config` 值和其他常见秘密字段会替换为 `[REDACTED]`。
 
-## 修复安全边界
+- `0`：没有阻断错误，或显式动作成功且静态验证通过；
+- `1`：仍有可能阻断启动的问题，或恢复后静态状态不完整；
+- `2`：参数、运行环境或动作执行失败。
 
-每条可执行修复都包含稳定 ID、风险级别、说明和精确目标：
+## 安全边界
 
-- 文件修复在确认前展示路径，确认后再次校验 SHA-256 指纹。
-- 写入前创建 `.dsh-doctor-<timestamp>.bak` 备份，再通过同目录临时文件原子替换。
-- 外部命令使用固定 argv 调用，不拼接 shell 命令。
-- `--json --fix --yes` 会捕获子命令输出并放入修复结果，保证 stdout 始终只有一个合法 JSON 文档。
-- 命令修复绑定当前诊断的 `DSH_HOME`，并展示解析出的真实 CLI 路径；不会假定 PATH 中存在 `dsh`。
-- 单个命令修复最长运行 10 分钟，超时会终止该动作并把后续动作标记为跳过。
-- 任一步失败即停止后续修复，并保留已经创建的备份。
-- 完成后重新运行全部诊断，以最终状态决定退出码。
-
-首期只自动处理确定性操作，例如把已安装 bundle 恢复到 manifest 列表，或运行明确的 profile install/update。损坏 JSON/YAML、凭据值和插件移除只给建议，不猜测应该删除或改成什么。
-
-## 退出码
-
-- `0`：没有阻断错误；warning 仍会显示
-- `1`：发现可能阻断 Harness 启动的问题
-- `2`：参数、运行环境或修复执行失败
-
-## 当前限制
-
-- 静态扫描只识别代码中的字面量 `require("package")`；动态依赖需要未来的 bundle 元数据协议。
-- 配置检查覆盖语法和 Doctor 能稳定对齐的结构，并按当前 Harness patch 算法做无执行组合检查；不会求值 `!!js`，也不会加载第三方插件。
-- 版本兼容以插件 `peerDependencies` 和当前可解析 Harness package 版本为依据；未声明兼容范围或无法解析对应当前版本的插件只能做结构检查。
-- lockfile 检查只对 profile 的直接依赖 importer 做确定性交叉验证，不递归扫描整个 npm 依赖树。
-- 真实启动探针尚未启用；即使复制 `DSH_HOME`，第三方插件仍可能访问网络、绝对路径或启动外部进程，不能宣称无副作用。
+- 不执行第三方插件，不求值 `!!js`；诊断会解析配置结构，但 JSON、baseline 和恢复快照会脱敏所有插件 `config` 值及其他常见秘密字段，文本报告也不打印配置值；
+- registry 结果只证明 manifest 声明，不证明真实运行兼容；
+- 动态 Service 依赖、外部副作用、真实 UI 和业务流程需要用户验证；
+- patch 精确编辑只处理 Doctor 能安全解析和定位的结构；有歧义时拒绝自动操作；
+- 添加、更新或删除 bundle 后，运行中的 profile 不会自动改变 bundle 集合，必须重启。
 
 ## 从源码开发
 
 ```sh
 npm install
 npm run check
-node src/cli.mjs --help
+npm pack --dry-run
 ```
 
-新包需要先由 `@bruc3van` 对应的 npm 账号完成一次 `npm publish --access public`，创建公开包页面。然后在 npm 包设置中添加 GitHub Actions Trusted Publisher：Organization or user 为 `bruc3van`，Repository 为 `dsh-doctor`，Workflow filename 为 `release.yml`，Environment 留空，Allowed actions 只启用 `npm publish`。
-
-后续发布前，需要在 `CHANGELOG.md` 中增加与版本 tag 同名的中文 `## vX.Y.Z` 条目。推送与 `package.json` 版本一致的 tag 后，workflow 会通过 OIDC 发布 npm 包、生成 provenance，并自动用该中文条目创建或更新 GitHub Release；缺少中文条目时发布流程会失败。不需要保存长期 npm token。
+发布仍使用 GitHub Actions OIDC 与 npm provenance；本地实现和验证不会自动提交、打 tag 或发布。

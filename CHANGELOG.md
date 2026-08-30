@@ -2,6 +2,33 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.4.0
+
+### 主要更新
+
+- 将诊断输出升级为逐插件“诊断与恢复决策”：兼容状态、故障原因、配置来源、版本检查和恢复选项彼此分离。
+- 按当前 DSH 的 bundle、profile、home 层级重建默认/生效配置树，记录字段级来源、被替换来源和整体替换丢失路径，并新增旧 patch、重复 mount、entry 冲突和高层覆盖诊断。
+- 新增显式 npm registry 兼容版本检查；遍历所有已发布 manifest，选择声明兼容当前 DSH 的最高精确版本，不把 `latest` 或离线状态误报为可用结论。
+- 新增 `recover <package>`，支持精确版本更新、临时 quarantine overlay、经 `--verified` 门控的持久隔离，以及独立、显式确认的安全删除。
+- `recover`/`baseline` 与旧式 `--fix` 严格互斥；健康插件不会被推荐隔离，删除预检和删除后验证会保留 disabled 手工 mount 与 dangling patch，并要求预览阶段即可生成完整 quarantine。
+- 持久 quarantine 追加最终生效覆盖并逐个核验目标 entry；group config 整体替换会重建生效树；显式 Harness workspace 不再混入 profile 残留包版本，已确认的 client contract 错误会输出确定原因。
+- JSON、baseline 和删除前恢复快照会脱敏所有插件 config 值及其他常见秘密字段；更新动作会核验目标精确版本和最终兼容状态；非法的非数组 group config 不再保留幽灵子 entry，中文帮助恢复完整翻译。
+- 删除前检查直接依赖、核心 bundle、lockfile、手工 mount、dangling patch 和 client 依赖者，保存诊断快照与隔离 overlay；删除后重新核验 dependency、bundle 与活跃 entry，并输出原版本回滚命令。
+- 新增 `baseline create/compare`，保存升级前插件、Harness、配置树和 findings，并对升级后的版本、兼容状态与问题变化进行归因。
+- 所有持久 YAML 修改继续使用 SHA-256 预检和同目录原子替换；已有文件使用时间戳备份，首次新建文件使用带创建内容哈希的删除式回滚记录；旧版 `--fix` 保持兼容，但永远不会推断插件隔离或删除。
+
+### 安装
+
+```sh
+npm install --global @bruc3van/dsh-doctor@0.4.0
+dsh-doctor diagnose
+```
+
+### 验证
+
+- 覆盖配置来源与替换、非 latest 兼容候选、精确 name assertion、临时/持久隔离、备份、baseline 漂移与删除残留阻断。
+- GitHub Actions 继续覆盖 macOS、Ubuntu 和 Windows，以及 Node.js 22.19 和 24。
+
 ## v0.1.6
 
 ### 主要更新

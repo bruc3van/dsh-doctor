@@ -1,7 +1,7 @@
 {
   "name": "@bruc3van/dsh-doctor",
-  "version": "0.1.6",
-  "description": "Diagnose DSH plugins broken by upgrades, startup blockers, and profile issues with explicit, confirmed repairs",
+  "version": "0.4.0",
+  "description": "Diagnose DSH upgrade failures and make evidence-backed plugin recovery, quarantine, or removal decisions",
   "license": "MIT",
   "type": "module",
   "repository": {

@@ -36,6 +36,19 @@ test('CLI uses exit code 2 for arguments and machine-readable runtime failures',
   assert.equal(result.stderr, '')
 })
 
+test('CLI rejects recover or baseline mixed with legacy --fix before dispatch', () => {
+  let result = spawnSync(process.execPath, [
+    cli, 'recover', 'fixture-plugin', '--action', 'remove', '--fix', '--yes', '--json',
+  ], { encoding: 'utf8' })
+  assert.equal(result.status, 2)
+  assert.match(JSON.parse(result.stdout).operationalError, /only be used with diagnose/)
+  assert.equal(result.stderr, '')
+
+  result = spawnSync(process.execPath, [cli, 'baseline', 'create', '--fix', '--yes'], { encoding: 'utf8' })
+  assert.equal(result.status, 2)
+  assert.match(result.stderr, /only be used with diagnose/)
+})
+
 test('CLI exposes the package version and repair flags', () => {
   const version = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' })
   assert.equal(version.status, 0)
@@ -44,9 +57,55 @@ test('CLI exposes the package version and repair flags', () => {
   assert.match(help.stdout, /--fix, --repair/)
   assert.match(help.stdout, /--yes/)
 
+  const chineseHelp = spawnSync(process.execPath, [cli, '--lang', 'zh', '--help'], { encoding: 'utf8' })
+  assert.equal(chineseHelp.status, 0)
+  assert.match(chineseHelp.stdout, /检查选定的 profile/)
+  assert.match(chineseHelp.stdout, /输出机器可读 JSON/)
+  assert.doesNotMatch(chineseHelp.stdout, /inspect the selected profile|print machine-readable JSON/)
+
   const helpWithIrrelevantFlags = spawnSync(process.execPath, [cli, '--yes', '--lang', 'fr', '--help'], { encoding: 'utf8' })
   assert.equal(helpWithIrrelevantFlags.status, 0)
   assert.match(helpWithIrrelevantFlags.stdout, /^(?:Usage:|用法：)/)
+})
+
+test('CLI recursively redacts secret configuration fields from JSON reports', () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-doctor-cli-redact-'))
+  const profile = join(home, 'profiles', 'web')
+  const plugin = join(profile, 'node_modules', 'fixture-plugin')
+  mkdirSync(plugin, { recursive: true })
+  writeFileSync(join(profile, 'package.json'), `${JSON.stringify({
+    dependencies: { 'fixture-plugin': '1.0.0' },
+    dsh: { profile: { bundles: ['fixture-plugin'] } },
+  })}\n`)
+  writeFileSync(join(plugin, 'package.json'), `${JSON.stringify({
+    name: 'fixture-plugin', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })}\n`)
+  writeFileSync(join(plugin, 'cordis.patch.yml'), '- insert:\n    - id: fixture\n      name: fixture-plugin\n      config:\n        accessToken: cli-leak-sentinel\n        label: visible-label\n')
+  const result = spawnSync(process.execPath, [cli, '--home', home, '--json'], { encoding: 'utf8' })
+  assert.doesNotMatch(result.stdout, /cli-leak-sentinel/)
+  assert.match(result.stdout, /\[REDACTED\]/)
+  assert.doesNotMatch(result.stdout, /visible-label/)
+  assert.match(result.stdout, /"label": "\[REDACTED\]"/)
+  JSON.parse(result.stdout)
+})
+
+test('CLI omits source excerpts from malformed patch errors', () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-doctor-cli-yaml-secret-'))
+  const profile = join(home, 'profiles', 'web')
+  const plugin = join(profile, 'node_modules', 'fixture-plugin')
+  mkdirSync(plugin, { recursive: true })
+  writeFileSync(join(profile, 'package.json'), `${JSON.stringify({
+    dependencies: { 'fixture-plugin': '1.0.0' },
+    dsh: { profile: { bundles: ['fixture-plugin'] } },
+  })}\n`)
+  writeFileSync(join(plugin, 'package.json'), `${JSON.stringify({
+    name: 'fixture-plugin', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })}\n`)
+  writeFileSync(join(plugin, 'cordis.patch.yml'), '- insert: [\n  apiKey: malformed-yaml-leak-sentinel\n')
+  const result = spawnSync(process.execPath, [cli, '--home', home, '--json'], { encoding: 'utf8' })
+  assert.doesNotMatch(result.stdout, /malformed-yaml-leak-sentinel/)
+  const report = JSON.parse(result.stdout)
+  assert.match(report.findings.find(item => item.code === 'INVALID_PATCH_YAML').evidence, /line \d+, column \d+/)
 })
 
 test('CLI accepts equals-separated option values', () => {

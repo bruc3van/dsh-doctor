@@ -6,6 +6,8 @@ import yaml from 'js-yaml'
 import semver from 'semver'
 import { parseDocument } from 'yaml'
 import { languageName, localizedFinding } from './i18n.mjs'
+import { buildConfigurationModel } from './config-model.mjs'
+import { buildPluginDiagnoses } from './recovery.mjs'
 
 // Mirrors packages/client/web/src/platform.ts in DeepSeek Harness. Installed
 // DSH packages do not expose this source list, so update this baseline when
@@ -46,6 +48,13 @@ function finding(severity, code, message, options = {}) {
     ...options.suggestion === undefined ? {} : { suggestion: options.suggestion },
     ...options.repair === undefined ? {} : { repair: options.repair },
   }
+}
+
+function yamlErrorLocation(error) {
+  const mark = error?.mark
+  return Number.isInteger(mark?.line) && Number.isInteger(mark?.column)
+    ? `at line ${String(mark.line + 1)}, column ${String(mark.column + 1)}`
+    : 'parse error'
 }
 
 function readJson(file, subject, findings) {
@@ -510,6 +519,39 @@ function stringArray(value) {
   return Array.isArray(value) && value.every(item => typeof item === 'string') ? value : undefined
 }
 
+function packageMainExport(manifest) {
+  const exported = manifest?.exports?.['.']
+  if (typeof exported === 'string') return exported
+  if (objectRecord(exported) !== undefined) {
+    for (const key of ['import', 'default', 'require']) {
+      if (typeof exported[key] === 'string') return exported[key]
+    }
+  }
+  return typeof manifest?.main === 'string' ? manifest.main : undefined
+}
+
+function inspectRuntimeServiceProvider(record) {
+  const candidates = [...new Set([packageMainExport(record.manifest), clientExport(record.manifest)].filter(value => typeof value === 'string'))]
+  const evidence = []
+  for (const exported of candidates) {
+    const file = safePackageFile(record.directory, exported)
+    if (file === undefined || !regularFile(file)) continue
+    try {
+      if (statSync(file).size > 16 * 1024 * 1024) continue
+      const source = readFileSync(file, 'utf8')
+      const code = codePositions(source)
+      const patterns = [
+        /\b(?:ctx|context)\s*\.\s*provide\s*\(/g,
+        /\bclass\s+[A-Za-z_$][\w$]*\s+extends\s+Service\b/g,
+      ]
+      if (patterns.some(pattern => [...source.matchAll(pattern)].some(match => code[match.index]))) evidence.push(file)
+    } catch {
+      // Existing package and client checks own unreadable-artifact findings.
+    }
+  }
+  return evidence.length === 0 ? { status: 'not-detected' } : { status: 'detected', evidence }
+}
+
 function inspectClientPackage(record, context) {
   const {
     commandRepair, findings, harnessPackages, harnessPackagesAuthoritative, profile, resolvePackage,
@@ -689,7 +731,9 @@ function inspectPatchFile(file, subject, findings, packageName) {
   } catch (error) {
     findings.push(finding('error', 'INVALID_PATCH_YAML', `${subject} cannot be parsed.`, {
       package: packageName,
-      evidence: `${file}: ${error instanceof Error ? error.message : String(error)}`,
+      // js-yaml messages include a source excerpt, which may contain plugin
+      // credentials. Preserve only the location needed to repair the syntax.
+      evidence: `${file}: ${yamlErrorLocation(error)}`,
       suggestion: 'Repair the YAML syntax before starting this profile.',
     }))
     return undefined
@@ -1110,7 +1154,8 @@ function inspectCompatibility(record, context) {
       }))
       continue
     }
-    const supplier = harnessPackages.get(name) ?? resolvePackage(name)
+    const supplier = harnessPackages.get(name)
+      ?? (harnessPackagesAuthoritative ? undefined : resolvePackage(name))
     if (supplier === undefined) continue
     const version = supplier.manifest?.version
     if (typeof version !== 'string' || semver.valid(version) === null) continue
@@ -1321,6 +1366,11 @@ export function diagnose(options = {}) {
           operation: { type: 'add-bundle', name },
         },
       }))
+      findings.push(finding('warning', 'BUNDLE_PROFILE_DECLARATION_CONFLICT', `${name} declares a bundle layer but the profile does not activate it.`, {
+        package: name,
+        evidence: profileManifestFile,
+        suggestion: 'Reconcile the direct dependency and dsh.profile.bundles declaration with the active DSH CLI.',
+      }))
     }
   }
   const patchLayers = []
@@ -1328,7 +1378,7 @@ export function diagnose(options = {}) {
   for (const name of bundleNames) {
     const layer = inspectBundle(name, bundleRecords.get(name), findings)
     if (layer === undefined) patchCompositionValid = false
-    else patchLayers.push(layer)
+    else patchLayers.push({ ...layer, kind: 'bundle' })
   }
 
   for (const [file, subject, label] of [
@@ -1336,10 +1386,87 @@ export function diagnose(options = {}) {
     [join(home, 'cordis.patch.yml'), 'home patch', 'home patch'],
   ]) {
     const patches = inspectPatchFileIfPresent(file, subject, findings)
-    if (patches !== undefined) patchLayers.push({ file, label, patches })
+    if (patches !== undefined) patchLayers.push({
+      file,
+      label,
+      patches,
+      kind: label === 'profile patch' ? 'profile' : 'home',
+    })
     else if (existsSync(file)) patchCompositionValid = false
   }
+  for (const [index, value] of (options.patchFiles ?? []).entries()) {
+    const file = resolve(expandUserPath(value))
+    const patches = inspectPatchFile(file, `CLI overlay ${String(index + 1)}`, findings)
+    if (patches !== undefined) patchLayers.push({ file, label: `CLI overlay ${String(index + 1)}`, patches, kind: 'overlay' })
+    else patchCompositionValid = false
+  }
   if (patchCompositionValid) inspectPatchComposition(patchLayers, findings)
+  const configuration = buildConfigurationModel(patchLayers, issue => {
+    const owner = issue.layer?.package ?? issue.details?.origin?.package ?? issue.entry?.name
+    const evidence = issue.layer === undefined
+      ? issue.details?.ids?.join(', ')
+      : `${issue.layer.file}: entry ${String((issue.patchIndex ?? 0) + 1)}`
+    const messages = {
+      DUPLICATE_ENTRY_ID: `Entry id ${issue.details.id} is inserted more than once in the effective configuration.`,
+      DUPLICATE_PLUGIN_MOUNT: `${issue.entry.name} is mounted by multiple active entries.`,
+      CORE_ENTRY_DISABLED_BY_HIGHER_LAYER: `A higher configuration layer disables entry ${issue.entry.id}.`,
+      ENTRY_STRUCTURE_OVERRIDDEN: `A higher configuration layer changes the structure of entry ${issue.entry.id}.`,
+      INVALID_GROUP_CONFIG: `Group entry ${issue.entry.id} has a non-array config value.`,
+      GROUP_CONTENT_REPLACED: `A higher configuration layer replaces the complete group content of entry ${issue.entry.id}.`,
+      CONFIG_REPLACED_BY_HIGHER_LAYER: `A higher configuration layer replaces the complete config of entry ${issue.entry.id}.`,
+    }
+    findings.push(finding(['DUPLICATE_ENTRY_ID', 'INVALID_GROUP_CONFIG'].includes(issue.code) ? 'error' : 'warning', issue.code, messages[issue.code], {
+      package: owner,
+      evidence,
+      details: issue.details,
+      suggestion: 'Review the named configuration layer and keep one unambiguous source for this entry.',
+    }))
+  })
+  configuration.profile = profile
+  configuration.layerDetails = patchLayers.map(layer => {
+    const insertedIds = new Set()
+    const collect = entries => entries.forEach(entry => {
+      if (typeof entry.id === 'string') insertedIds.add(entry.id)
+      if (entry.group && Array.isArray(entry.config)) collect(entry.config)
+    })
+    layer.patches.filter(patch => Array.isArray(patch.insert)).forEach(patch => collect(patch.insert))
+    return {
+      kind: layer.kind,
+      file: layer.file,
+      package: layer.package,
+      insertCount: layer.patches.filter(patch => Array.isArray(patch.insert)).length,
+      overrideCount: layer.patches.filter(patch => !Array.isArray(patch.insert) && !insertedIds.has(patch.id)).length,
+    }
+  })
+  configuration.patchReferences = patchLayers.flatMap(layer => layer.patches.flatMap((patch, patchIndex) =>
+    !Array.isArray(patch.insert) && typeof patch.id === 'string'
+      ? [{ id: patch.id, kind: layer.kind, file: layer.file, package: layer.package, patchIndex }]
+      : []))
+  if (patchCompositionValid) {
+    const defaultConfiguration = buildConfigurationModel(patchLayers.filter(layer => layer.kind === 'bundle'))
+    const knownIds = new Set(defaultConfiguration.entries.map(entry => entry.id).filter(id => typeof id === 'string' && id.length > 0))
+    const knownGroups = new Set(defaultConfiguration.entries
+      .filter(entry => entry.group === true && typeof entry.id === 'string' && entry.id.length > 0)
+      .map(entry => entry.id))
+    const indexInserted = entries => entries.forEach(entry => {
+      if (typeof entry.id === 'string' && entry.id.length > 0) knownIds.add(entry.id)
+      if (entry.group === true && typeof entry.id === 'string' && entry.id.length > 0) knownGroups.add(entry.id)
+      if (entry.group === true && Array.isArray(entry.config)) indexInserted(entry.config)
+    })
+    for (const layer of patchLayers.filter(item => item.kind !== 'bundle')) {
+      layer.patches.forEach((patch, patchIndex) => {
+        if (Array.isArray(patch.insert)) {
+          if (typeof patch.id !== 'string' || patch.id.length === 0 || knownGroups.has(patch.id)) indexInserted(patch.insert)
+          return
+        }
+        if (typeof patch.id !== 'string' || knownIds.has(patch.id)) return
+        findings.push(finding('warning', 'PATCH_INCOMPATIBLE_WITH_CURRENT_DSH', `${layer.label} still targets entry ${patch.id}, which is absent from the current default DSH tree.`, {
+          evidence: `${layer.file}: entry ${String(patchIndex + 1)}`,
+          suggestion: 'Adjust or remove this patch after comparing it with the current default configuration.',
+        }))
+      })
+    }
+  }
   inspectSettings(join(home, 'settings.yaml'), findings)
   inspectCredentials(join(home, '.credentials.yaml'), findings)
 
@@ -1372,32 +1499,65 @@ export function diagnose(options = {}) {
     )
   }
 
+  const activeHarnessVersions = Object.fromEntries([...harness.packages].flatMap(([name, record]) =>
+    typeof record.manifest?.version === 'string' ? [[name, record.manifest.version]] : []))
+  if (typeof harness.version === 'string') activeHarnessVersions['@deepseek-ai/dsh'] ??= harness.version
+  for (const record of thirdPartyRecords) {
+    const peers = objectRecord(record.manifest.peerDependencies)
+    if (peers === undefined) continue
+    for (const name of Object.keys(peers)) {
+      if (name !== 'cordis' && !name.startsWith('@deepseek-ai/')) continue
+      const supplier = harness.packages.get(name)
+        ?? (harness.authoritative ? undefined : resolvePackage(name))
+      if (typeof supplier?.manifest?.version === 'string') activeHarnessVersions[name] = supplier.manifest.version
+    }
+  }
+
+  const packages = dependencyNames.map(name => {
+    const record = records.get(name)
+    if (record === undefined) return { name, installed: false, compatibility: 'incompatible' }
+    return {
+      name: record.requestedName ?? record.manifest.name,
+      version: record.manifest.version,
+      directory: record.directory,
+      installed: true,
+      client: record.manifest?.dsh?.client !== undefined,
+      clientExternal: stringArray(record.manifest?.dsh?.client?.external) ?? [],
+      clientInject: stringArray(record.manifest?.dsh?.client?.inject) ?? [],
+      runtimeServiceProvider: inspectRuntimeServiceProvider(record),
+      bundle: record.manifest?.dsh?.bundle !== undefined,
+      compatibility: pluginCompatibility(
+        record,
+        findings,
+        compatibilityChecks.get(record.requestedName ?? record.manifest.name),
+      ),
+    }
+  })
+  const pluginDiagnoses = buildPluginDiagnoses({
+    packages,
+    findings,
+    configuration,
+    bundleNames,
+    profileManifest,
+    lockfile,
+    dshCli: { available: dshCli !== undefined },
+  })
   return finish({
     home,
     profile,
     profileDir,
-    harness: { root: harness.root, version: harness.version },
+    harness: {
+      root: harness.root,
+      version: harness.version,
+      packages: activeHarnessVersions,
+    },
     lockfile,
     dshCli: dshCli === undefined
       ? { available: false, commandRepairNeeded }
       : { available: true, commandRepairNeeded, ...dshCli },
-    packages: dependencyNames.map(name => {
-      const record = records.get(name)
-      if (record === undefined) return { name, installed: false, compatibility: 'incompatible' }
-      return {
-        name: record.requestedName ?? record.manifest.name,
-        version: record.manifest.version,
-        directory: record.directory,
-        installed: true,
-        client: record.manifest?.dsh?.client !== undefined,
-        bundle: record.manifest?.dsh?.bundle !== undefined,
-        compatibility: pluginCompatibility(
-          record,
-          findings,
-          compatibilityChecks.get(record.requestedName ?? record.manifest.name),
-        ),
-      }
-    }),
+    packages,
+    configuration,
+    pluginDiagnoses,
   }, findings)
 }
 
@@ -1418,7 +1578,7 @@ function finish(context, findings) {
     compatible: context.packages.filter(item => item.compatibility === 'compatible').length,
   }
   context = { ...context, compatibility }
-  return { version: 1, ok: summary.errors === 0, context, summary, findings }
+  return { version: 2, ok: summary.errors === 0, context, summary, findings }
 }
 
 function appendReportField(lines, label, value, indent = '      ') {
@@ -1463,6 +1623,7 @@ export function formatReport(report, options = {}) {
     '',
   ]
   const packageNames = new Set(report.context.packages.map(item => item.name))
+  const diagnoses = new Map((report.context.pluginDiagnoses ?? []).map(item => [item.name, item]))
   const pluginFindings = new Map()
   const environmentFindings = []
   for (const item of report.findings) {
@@ -1501,6 +1662,14 @@ export function formatReport(report, options = {}) {
         appendReportField(lines, zh ? '版本' : 'Version', plugin.installed === false
           ? zh ? '未安装' : 'not installed'
           : plugin.version ?? (zh ? '未知' : 'unknown'))
+        const diagnosis = diagnoses.get(plugin.name)
+        if (diagnosis !== undefined) {
+          appendReportField(lines, zh ? '原因类型' : 'Cause', diagnosis.cause.type)
+          appendReportField(lines, zh ? '配置来源' : 'Configuration origin', diagnosis.configuration.originLayer)
+          appendReportField(lines, zh ? '兼容版本' : 'Compatible version', diagnosis.update.status === 'not-checked'
+            ? zh ? '未检查 registry' : 'registry not checked'
+            : diagnosis.update.status)
+        }
         lines.push(zh
           ? `      问题（${String(originals.length)}）:`
           : `      Problems (${String(originals.length)}):`)
@@ -1531,6 +1700,15 @@ export function formatReport(report, options = {}) {
         if (commands.length > 0) {
           lines.push(`      ${zh ? '可执行命令' : 'Available commands'}:`)
           commands.forEach(command => lines.push(`        $ ${command}`))
+        }
+        if (diagnosis !== undefined) {
+          lines.push(`      ${zh ? '恢复选择' : 'Recovery options'}:`)
+          for (const option of diagnosis.recovery.options) {
+            lines.push(`        - ${option.kind}: ${option.availability}${option.recommended ? (zh ? '（推荐）' : ' (recommended)') : ''}`)
+          }
+          if (diagnosis.recovery.options.some(option => option.kind === 'remove')) {
+            lines.push(`        ${zh ? '动态 Service 依赖：未知，静态检查不能证明删除不影响其他功能。' : 'Dynamic Service dependencies: unknown; static checks cannot prove removal leaves every feature working.'}`)
+          }
         }
         lines.push('')
       }

@@ -2,142 +2,117 @@
 
 [中文](README.md) | English
 
-DSH Doctor helps DSH and plugin users quickly identify plugins that break startup or stop working after a DSH upgrade. It groups each plugin's problems, impact, and recommended actions, while also checking common profile configuration and version-drift issues. Diagnosis is read-only by default; repairs run only after you explicitly use `--fix`, review the exact plan, and confirm it. File edits are backed up first.
+DSH Doctor is a diagnostic and recovery-decision tool for DSH upgrade incidents. For each plugin, it explains the incompatibility, the configuration layer that caused or amplified it, the preferred repair, and whether temporary isolation or removal can be proven safe enough to offer.
 
-This is a community-maintained third-party tool and is not an official DeepSeek project. It does not load or execute code from the plugins it inspects.
+This is a community-maintained third-party tool, not an official DeepSeek project. Normal diagnosis is read-only and never loads or executes inspected plugin code.
 
-## Installation
+## Install
 
 Node.js `22.19+` or `24+` is required:
 
 ```sh
 npm install --global @bruc3van/dsh-doctor
-dsh-doctor
+dsh-doctor diagnose
 ```
 
-You can also run it without a global installation:
+The default target is `$DSH_HOME/profiles/web`, falling back to `~/.dsh`. Use `--dsh-command /path/to/dsh` for a special installation or `--harness-root /path/to/deepseek-harness` for a source checkout.
+
+## Diagnosis model
+
+Version 0.4.0 composes the configuration from an empty tree in the same order as current DSH:
+
+```text
+bundle layers → profile cordis.patch.yml → home cordis.patch.yml → CLI overlays
+```
+
+The JSON report retains `currentDefaultTree`, `currentEffectiveTree`, field-level provenance, replaced sources, and paths removed by whole-`config` replacement. It diagnoses stale patches, duplicate ids and mounts, higher-layer disabling or replacement, bundle/profile conflicts, plugin versions and artifacts, client contracts, dependencies, and runtime issues.
+
+Every `pluginDiagnoses[]` object keeps current `status` separate from `recovery`. Being removable does not make an incompatible plugin compatible.
 
 ```sh
-npx @bruc3van/dsh-doctor
+dsh-doctor diagnose
+dsh-doctor diagnose --json
+dsh-doctor diagnose --check-updates
 ```
 
-By default, Doctor checks `$DSH_HOME/profiles/web`. If `DSH_HOME` is unset, it uses `~/.dsh`.
+Only `--check-updates` and `recover` contact the npm registry. Offline diagnosis reports `update.status: "not-checked"`; it never turns “not checked” into “no compatible version.”
 
-Doctor does not require `dsh` to be installed as a global command. It searches, in order, an explicit `--dsh-command` or `DSH_DOCTOR_DSH_COMMAND`, the CLI under an explicit `--harness-root`, the shared profile installation or links left by the npx cache, the current project, PATH, and finally an automatically detected Harness source checkout. For a bundled DSH Desktop runtime or another custom installation, pass `--dsh-command /path/to/dsh`; the official package's `lib/bin.js` is also accepted. If no CLI can be found, Doctor still completes its read-only checks but does not offer or run command-based repairs that it cannot verify.
+## Compatible-version search
 
-## How it works
-
-A complete diagnosis and repair flow has four steps:
-
-1. `dsh-doctor` inspects the active DSH Home, profile, plugins, and Harness versions without making changes.
-2. Doctor reports evidence and recommendations by severity and plugin compatibility state.
-3. `dsh-doctor --fix` shows the exact file edits or DSH command plan and waits for confirmation.
-4. After applying confirmed repairs, Doctor runs the full diagnosis again and determines the exit code from the final state.
-
-Doctor never loads inspected plugins and does not modify configuration during a normal diagnosis. Operations without one deterministic answer—such as guessing credentials, rewriting damaged YAML, or removing a plugin—remain recommendations only.
-
-## Output language
-
-Text output supports English and Chinese. Doctor resolves the language in this order:
-
-1. `--lang zh|en`
-2. `DSH_DOCTOR_LANG`
-3. `locale.preference` in the active DSH Home's `settings.yaml`
-4. Terminal or system locale
+Doctor checks all published manifests instead of trusting `latest`, then selects the highest version whose declared peer ranges accept the resolvable active DSH packages. This is only a manifest-declared candidate, not proof from a real startup or UI test.
 
 ```sh
-dsh-doctor --lang zh
-dsh-doctor --lang en
-DSH_DOCTOR_LANG=zh dsh-doctor
+dsh-doctor recover @scope/plugin --action check-update
+dsh-doctor recover @scope/plugin --action update       # preview
+dsh-doctor recover @scope/plugin --action update --yes # exact version
 ```
 
-`--json` always keeps stable English messages and diagnostic codes so language changes do not break automation.
+## Quarantine
 
-## Common commands
+When no compatible release is available, generate and test a temporary overlay first:
 
 ```sh
-# Read-only diagnosis
-dsh-doctor
-dsh-doctor --profile web
-dsh-doctor --home /path/to/.dsh
-dsh-doctor --dsh-command /path/to/@deepseek-ai/dsh/lib/bin.js
-
-# Machine-readable read-only report with no prompts
-dsh-doctor --json
-
-# Show a repair plan, apply it after confirmation, and diagnose again
-dsh-doctor --fix
-
-# Explicitly confirm the current plan in automation
-dsh-doctor --fix --yes --json
+dsh-doctor recover @scope/plugin --action quarantine
+dsh-doctor recover @scope/plugin --action quarantine --output ./plugin-quarantine.yml
+dsh --profile web --patch ./plugin-quarantine.yml
 ```
 
-`--repair` is an alias for `--fix`. `--yes` is valid only together with `--fix`.
+Doctor only generates it when every active entry is mapped precisely, has a unique non-empty id and an exact name assertion, and the bundle does not rewrite entries owned by another layer. Core bundles, declared client dependents, and plugins statically detected as runtime Service providers with unproven dependents require manual review.
 
-## Plugin compatibility after a DSH upgrade
+After testing the overlay, persistence is separately gated:
 
-After DSH is updated, Doctor assigns every direct profile plugin one explicit state and summarizes the result in both text and JSON reports:
+```sh
+dsh-doctor recover @scope/plugin --action persist-quarantine --verified
+dsh-doctor recover @scope/plugin --action persist-quarantine --verified --yes
+```
 
-- `incompatible`: Doctor found an error that can prevent the plugin or Harness from loading, such as a missing plugin or an injection targeting a removed client runtime.
-- `risk`: Doctor found a current-version risk, such as a Harness peer range that rejects the new version, a dependency on a removed DSH package, an unsupported Node.js version, or installation drift.
-- `unknown`: The plugin does not declare a Harness compatibility range through `peerDependencies`, or the active package version for a declared peer cannot be resolved. Doctor cannot prove it supports the upgraded DSH, but does not report uncertainty as a failure.
-- `compatible`: The declared compatibility ranges accept the active Harness and no plugin-related errors or warnings were found.
+Persistence appends the final winning profile-layer disable override and refuses the write when a home or CLI overlay would still outrank it. It then recomposes the configuration and verifies every exact target is disabled; failed verification returns a nonzero exit code. The write rechecks SHA-256 and atomically replaces the profile patch. An existing patch gets a `.dsh-doctor-<timestamp>.bak`; a first-time file gets a `.rollback.json` containing its target and created-content hash, allowing deletion rollback only while the file is unchanged.
 
-Compatibility checks cover every direct profile plugin, not only frontend plugins with `dsh.client`. References to removed Harness APIs in bundle-only or server-side plugins are reported as well. After upgrading DSH, run `dsh-doctor` first, review the exact update recommendations, and then decide whether to continue with `dsh-doctor --fix`.
+Preview and explicitly restore that backup or rollback record with `recover <package> --action rollback-quarantine --backup <path>`, adding `--yes` to apply it. Doctor only accepts timestamped recovery files belonging to the selected profile patch.
 
-## Current checks
+## Safe removal
 
-- JSON root structure, dependency maps, bundle lists, and reload lifecycle in the profile `package.json`
-- Syntax and top-level structure of profile, home, and bundle `cordis.patch.yml` files, including `!!js` expressions
-- Safe structural checks for `settings.yaml` and `.credentials.yaml`; credential diagnostics never expose secret values
-- Presence of profile dependencies, bundle declarations, patch files, and client bundles
-- Consistency among the profile `package.json`, the `pnpm-lock.yaml` importer, and installed versions
-- Node.js `engines`, Harness peer ranges, and obsolete DSH dependencies for all direct plugins, including bundle-only and server-side plugins
-- Version drift and stale top-level `@deepseek-ai/dsh-*` packages across the active DSH CLI, Harness workspace, and profile
-- The `platform`, `immediately`, `inject`, `external`, and `./client` export contract for `dsh.client`
-- Consistency between literal `require()` calls in client bundles and external or module suppliers
-- References to removed Harness client packages
-- Third-party plugin peer ranges against actual active Harness versions
-- Real resolution precedence where the Harness installation wins over a profile-local bundle with the same name
-- Static composition of bundle, profile, and home patches in official Harness order, including missing targets, invalid group inserts, and name assertions, without loading plugins
+Removal is always explicit and can never be inferred by legacy `--fix --yes`:
 
-## Repair safety
+```sh
+dsh-doctor recover @scope/plugin --action remove       # impact preview
+dsh-doctor recover @scope/plugin --action remove --yes
+```
 
-Every executable repair has a stable ID, risk level, description, and exact target:
+Automatic removal requires a direct profile dependency, a readable lockfile, a non-core bundle, no manual mount or dangling patch that would remain, and a working current DSH CLI. Before the official `dsh plugin --profile <name> remove <package>` command runs, Doctor saves a redacted diagnostic snapshot and quarantine overlay. It then re-diagnoses dependency, bundle-layer, and active-entry absence and reports the exact rollback install command.
 
-- File repairs show their paths before confirmation and verify the SHA-256 fingerprint again before writing.
-- Doctor creates a `.dsh-doctor-<timestamp>.bak` backup before replacing a file atomically through a temporary file in the same directory.
-- External commands use fixed argument arrays and never construct shell commands.
-- `--json --fix --yes` captures subprocess output in the repair result so stdout remains exactly one valid JSON document.
-- Command repairs bind the diagnosed `DSH_HOME` and show the resolved CLI path instead of assuming `dsh` exists on PATH.
-- Each command repair has a 10-minute limit; a timeout terminates that action and marks subsequent actions as skipped.
-- A failed repair stops later actions and preserves backups already created.
-- Doctor runs every diagnostic again after repairs and uses the final state for its exit code.
+Static analysis cannot prove the absence of dynamic Service dependencies, external data, or regressions in every real workflow. Restart the profile and validate its main functions after any bundle update or removal.
 
-The initial release automatically performs only deterministic operations, such as restoring an installed bundle to the manifest list or running an exact profile install or update command. Damaged JSON or YAML, credential values, and plugin removal remain recommendations because Doctor cannot safely guess the intended result.
+## Baselines
 
-## Exit codes
+```sh
+dsh-doctor baseline create
+dsh-doctor baseline compare
+dsh-doctor baseline create --output ./before-upgrade.json
+```
 
-- `0`: No blocking errors were found; warnings may still be present
-- `1`: Doctor found a problem that may prevent Harness from starting
-- `2`: Invalid arguments, an operational failure, or a failed repair
+The default baseline is `.dsh-doctor/baseline.json` inside the profile. It compares Harness state, package versions and compatibility, and introduced or resolved finding codes. It supplements current evidence; it is never required for diagnosis.
 
-## Current limitations
+## Legacy confirmed repairs
 
-- Static scanning recognizes only literal `require("package")` calls. Dynamic dependencies require a future bundle metadata contract.
-- Configuration checks cover syntax and structures that Doctor can align deterministically. Patch composition follows the current Harness algorithm, but Doctor does not evaluate `!!js` or load third-party plugins.
-- Version compatibility is based on plugin `peerDependencies` and resolvable active Harness package versions. A plugin without a declared range, or whose corresponding active version cannot be resolved, can receive only structural checks and an `unknown` compatibility state.
-- Lockfile checks deterministically cross-check the direct profile importer only; they do not recursively scan the complete npm dependency graph.
-- A runtime startup probe is not enabled. Even a copied `DSH_HOME` would not make arbitrary third-party plugin code side-effect-free because it could access the network, absolute paths, or external processes.
+`--fix` and `--repair` remain compatible with deterministic 0.1.x install, update, and bundle-manifest repairs. They never quarantine or remove a plugin. File actions are hash-checked, backed up, and atomically replaced; commands use fixed argv and the selected `DSH_HOME`.
+
+## Output, exit codes, and boundaries
+
+Text output supports Chinese and English. `--json` keeps stable English codes and complete non-secret evidence; plugin `config` values and other common secret fields are replaced with `[REDACTED]`.
+
+- `0`: no blocking error, or an explicit action passed static verification;
+- `1`: a possible startup blocker remains, or recovery verification is incomplete;
+- `2`: argument, environment, or action execution failure.
+
+Doctor does not execute third-party plugins or evaluate `!!js`. It parses configuration structure, but redacts every plugin `config` value plus other common secret fields from JSON, baselines, and recovery snapshots; text reports do not print configuration values. Registry compatibility is declarative only. Dynamic services, external side effects, real UI behavior, and business workflows require real user validation. Ambiguous YAML or plugin ownership causes an automatic action to be refused.
 
 ## Development
 
 ```sh
 npm install
 npm run check
-node src/cli.mjs --help
+npm pack --dry-run
 ```
 
-The first publication of a new package must be performed by the npm account that owns the `@bruc3van` scope with `npm publish --access public`. Then configure a GitHub Actions Trusted Publisher in the npm package settings with Organization or user `bruc3van`, Repository `dsh-doctor`, Workflow filename `release.yml`, no Environment, and only the `npm publish` allowed action.
-
-Before each later release, add a Chinese `## vX.Y.Z` entry matching the version tag to `CHANGELOG.md`. Pushing a tag that matches `package.json` makes the workflow publish through OIDC with npm provenance and automatically create or update the GitHub Release from that Chinese entry. The release fails if the entry is missing or contains no Chinese text. No long-lived npm token is required.
+Publishing uses GitHub Actions OIDC and npm provenance. Local implementation and verification do not commit, tag, or publish automatically.

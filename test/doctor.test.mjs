@@ -757,6 +757,7 @@ test('composes patch layers without loading plugins and reports Harness patch wa
   const report = diagnose({ home: subject.home, harnessRoot: subject.harness })
   assert.deepEqual(report.findings.map(item => item.code), [
     'PATCH_ID_REQUIRED',
+    'PATCH_INCOMPATIBLE_WITH_CURRENT_DSH',
     'PATCH_NAME_MISMATCH',
     'PATCH_TARGET_NOT_FOUND',
     'PATCH_TARGET_NOT_GROUP',
