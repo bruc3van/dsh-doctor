@@ -96,7 +96,7 @@ Install it directly from the GitHub repository into a supported coding agent:
 npx skills add bruc3van/dsh-doctor
 ```
 
-The repository currently exposes one skill, so the `skills` CLI discovers and installs `dsh-plugin-upgrade`; add `--skill dsh-plugin-upgrade` to select it explicitly. This installs the agent skill, not a global DSH Doctor CLI. The skill uses an existing `dsh-doctor` command when available and falls back to the matching `npx @bruc3van/dsh-doctor` workflow when it is not installed.
+The repository currently exposes one skill, so the `skills` CLI discovers and installs `dsh-plugin-upgrade`; add `--skill dsh-plugin-upgrade` to select it explicitly. This installs the agent skill, not a global DSH Doctor CLI. The skill checks the local CLI version and target catalog, performs a read-only registry update check with `npm view`, and pins one exact npx version for all three phases when the local CLI is missing, outdated, or lacks the catalog. A global install or update always requires explicit user authorization.
 
 ---
 

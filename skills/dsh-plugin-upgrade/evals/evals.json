@@ -31,6 +31,18 @@
         "Uses a temporary DSH_HOME and reports retained failure state",
         "Keeps business behavior verification separate from activation smoke"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "帮我升级这个插件，但机器上的 dsh-doctor 是旧版，而且我没有授权修改全局 npm 包。请先检查有没有新版本，再继续迁移。",
+      "expected_output": "Checks the registry read-only, selects one exact-version npx CLI with the required catalog, avoids global installation, and reports the selected version and update status.",
+      "expectations": [
+        "Checks the local CLI version and exact migration catalog before use",
+        "Uses npm view as a read-only registry update check",
+        "Pins one resolved npx package version for all migration phases",
+        "Does not install or update a global CLI without explicit authorization",
+        "Reports local, registry, selected CLI, catalog, and update-status evidence"
+      ]
     }
   ]
 }

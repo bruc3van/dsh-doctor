@@ -2,6 +2,25 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.5.2
+
+### 主要更新
+
+- 为 `dsh-plugin-upgrade` skill 增加完整 CLI bootstrap：检查 Node.js、本地 DSH Doctor 版本和目标 migration catalog，并通过只读 `npm view` 检查 registry 最新版本。
+- 本地 CLI 缺失、过期或缺少 catalog 时，默认使用解析后的精确 npm 版本执行 npx，并在 analyze、apply、verify 三阶段保持同一版本，避免多次使用 `@latest` 产生漂移。
+- 明确 skill 安装不授权全局 npm 写入；只有用户显式确认后才允许全局安装或更新，并要求安装后重新核验版本和 catalog。
+- 新增 CLI 缺失/过期场景的 skill eval，要求报告本地版本、registry 版本、最终选择、catalog 证据和更新状态。
+
+### 安装
+
+```sh
+npx skills add bruc3van/dsh-doctor
+```
+
+### 验证
+
+- 验证独立安装后的 skill 包含 CLI bootstrap reference 与新增 eval，并完成 skill 结构、95 项测试、完整 CI 矩阵和 npm 打包内容检查。
+
 ## v0.5.1
 
 ### 主要更新

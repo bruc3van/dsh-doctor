@@ -96,7 +96,7 @@ dsh-doctor migrate verify /path/to/plugin --level runtime --yes \
 npx skills add bruc3van/dsh-doctor
 ```
 
-仓库当前只提供一个 skill，`skills` CLI 会发现并安装 `dsh-plugin-upgrade`；需要显式选择时可加 `--skill dsh-plugin-upgrade`。该命令只安装 Agent skill，不会全局安装 DSH Doctor CLI；skill 会优先使用现有 `dsh-doctor`，不存在时按流程通过 `npx @bruc3van/dsh-doctor` 调用匹配的 CLI。
+仓库当前只提供一个 skill，`skills` CLI 会发现并安装 `dsh-plugin-upgrade`；需要显式选择时可加 `--skill dsh-plugin-upgrade`。该命令只安装 Agent skill，不会全局安装 DSH Doctor CLI。Skill 会检查本地 CLI 版本和目标 catalog，通过只读 `npm view` 检查 registry 更新；本地 CLI 缺失、过期或缺少 catalog 时，默认固定一个精确版本并通过 `npx` 完成三阶段。全局安装或更新始终需要用户明确授权。
 
 ---
 

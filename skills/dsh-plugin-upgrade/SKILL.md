@@ -15,6 +15,7 @@ Determine:
 - the plugin repository root;
 - the DSH Harness checkout when available;
 - whether the developer authorizes writes and project command execution;
+- whether the developer authorizes a global CLI install or update;
 - the plugin's package manager and build scripts.
 
 Use these fixed refs unless the user explicitly requests a supported alternative:
@@ -22,9 +23,11 @@ Use these fixed refs unless the user explicitly requests a supported alternative
 - source: `dsh-v0.1.1-rc.2`
 - target: `dsh-v0.1.2-alpha.2`
 
-Read [migration-map.md](references/migration-map.md) before making semantic changes. Read [verification.md](references/verification.md) before build or runtime verification.
+Read [cli-bootstrap.md](references/cli-bootstrap.md) before running any migration command, [migration-map.md](references/migration-map.md) before making semantic changes, and [verification.md](references/verification.md) before build or runtime verification.
 
-Before touching the plugin, run `dsh-doctor migrations list` and confirm this exact version pair is present. If `dsh-doctor` is not on `PATH`, use `npx --package=@bruc3van/dsh-doctor dsh-doctor migrations list` and confirm the same catalog before continuing; never silently use an older CLI that lacks the migration.
+Before touching the plugin, inspect the local CLI and perform the read-only registry update check described in `cli-bootstrap.md`. Select one exact DSH Doctor version, verify it exposes this migration catalog, and keep the same invocation for analyze, apply, and verify. Prefer an exact-version `npx` fallback over changing the developer's global installation. Never globally install or update the CLI without explicit authorization.
+
+The examples below use `dsh-doctor` for readability. When bootstrap selected an npx invocation, substitute the complete pinned prefix, `npx --yes --package=@bruc3van/dsh-doctor@<selected-version> dsh-doctor`, in every phase.
 
 ## Phase 1: analyze
 
@@ -96,3 +99,4 @@ State the highest achieved gate exactly:
 - behavior verified separately with named evidence
 
 Do not call the plugin compatible while errors, semantic tasks, stale artifacts, or required behavior checks remain. Include backups and retained temporary directories in the handoff.
+Also report the selected DSH Doctor version and source (`local`, exact-version `npx`, or explicitly authorized global install), the registry version observed at bootstrap, and whether update status was current, outdated, missing, or unknown.
