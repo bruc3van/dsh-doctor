@@ -23,22 +23,28 @@ npx @bruc3van/dsh-doctor diagnose
 
 默认检查 `$DSH_HOME/profiles/web`；未设置 `DSH_HOME` 时使用 `~/.dsh`。特殊安装可用 `--dsh-command /path/to/dsh` 指定实际 CLI，源码工作区可用 `--harness-root /path/to/deepseek-harness`。
 
-## 插件从 0.1.1 升级到 0.1.2
+---
+
+## 插件迁移：0.1.1 → 0.1.2
+
+### migrate 命令
 
 Doctor 内置 `dsh-v0.1.1-rc.2 → dsh-v0.1.2-alpha.2` 的版本化迁移目录，并把升级拆成三个可审计阶段：
 
 ```sh
-# 1. 只读分析源码、类型导入、manifest、client graph 与构建产物
+# 阶段 1：只读分析源码、类型导入、manifest、client graph 与构建产物
 dsh-doctor migrate analyze /path/to/plugin \
+  --from dsh-v0.1.1-rc.2 \
+  --to dsh-v0.1.2-alpha.2 \
   --harness-root /path/to/deepseek-harness
 
-# 2. 预览 catalog 确认为 exact 的改写；加入 --yes 才写入并创建备份
+# 阶段 2：预览精确改写；加 --yes 才写入并创建时间戳备份
 dsh-doctor migrate apply /path/to/plugin --safe \
   --harness-root /path/to/deepseek-harness
 dsh-doctor migrate apply /path/to/plugin --safe --yes \
   --harness-root /path/to/deepseek-harness
 
-# 3. 依次完成静态、构建和隔离运行时验证
+# 阶段 3：依次完成静态、构建和隔离运行时验证
 dsh-doctor migrate verify /path/to/plugin --level static \
   --harness-root /path/to/deepseek-harness
 dsh-doctor migrate verify /path/to/plugin --level build --yes \
@@ -47,15 +53,58 @@ dsh-doctor migrate verify /path/to/plugin --level runtime --yes \
   --harness-root /path/to/deepseek-harness
 ```
 
-`analyze` 使用 TypeScript AST，因此能识别不会出现在 JavaScript bundle 中的 `import type`。`apply --safe` 只迁移 catalog 标记为精确等价的符号，并把非移除的 DSH 开发依赖固定到目标版本；例如 store 工具迁往 `dsh-client-store`，`ClientContext` 迁往 Cordis `Context` 并保留本地别名。它可能补充精确符号迁移需要的新依赖，但不会自动修改已有 peer 的版本范围。Session、Workspace、Conversation 和 pending interaction 属于所有权及生命周期变化，会保留为 `MIG_SEMANTIC_API_CHANGE`，不会被机械替换。
+可用 `dsh-doctor migrations list` 确认当前 CLI 包含所需版本对；如未安装，`npx --package=@bruc3van/dsh-doctor dsh-doctor migrations list` 也可完成确认。
 
-`artifact-verified` 至少要求成功执行 `build` 或 `pack:check`，仅有 `test`/`typecheck` 不足以证明发布产物。`runtime` 会从插件仓库打真实 tarball，在临时 `DSH_HOME` 中通过目标 DSH CLI 安装到全新 web profile、组合配置并做激活 smoke，不触碰普通用户的 `~/.dsh`；它还会核验目标 CLI 版本、profile manifest、安装后的包、bundle 激活和有效配置证据，不能由一个只返回成功码的空脚本伪造。失败现场会保留并报告路径；成功后默认清理。最高状态分为 `analyzed`、`source-migrated`、`artifact-verified` 和 `runtime-verified`；真实 UI、生命周期与业务行为仍需单独验证。
+### 各阶段说明
 
-仓库还随包提供 [`dsh-plugin-upgrade` skill](skills/dsh-plugin-upgrade/SKILL.md)，用于指导编码 Agent 严格按上述阶段帮助插件开发者升级。
+**analyze**：使用 TypeScript AST 扫描，能识别不会出现在 JavaScript bundle 中的 `import type`；同时检查 package 元数据、client graph 声明和构建产物，不因 bundle 干净就推断兼容。
 
-## 0.4.0 的诊断模型
+**apply --safe**：只迁移 catalog 标记为精确等价的符号，将非移除的 DSH 开发依赖固定到目标版本，并创建时间戳备份。可能补充精确符号迁移所需的新依赖，但不会自动修改已有 peer 范围。Session、Workspace、Conversation 和 pending interaction 属于所有权及生命周期变化，保留为 `MIG_SEMANTIC_API_CHANGE`，不做机械替换。
 
-`diagnose` 从空树开始，按当前 DSH 的正式顺序组合：
+**verify**：
+
+| 级别 | 执行内容 |
+|---|---|
+| `static` | 使用 TypeScript AST 检查源码/import、manifest、client graph 与构建产物，不执行项目脚本 |
+| `build` | 执行插件构建脚本，验证产物（需 `build` 或 `pack:check` 成功；仅有 `test`/`typecheck` 不足以证明发布产物） |
+| `runtime` | 打真实 tarball，在临时 `DSH_HOME` 中通过目标 CLI 安装到全新 web profile，核验 CLI 版本、profile manifest、已安装包、bundle 激活与有效配置，执行激活 smoke；不触碰普通用户的 `~/.dsh` |
+
+最高状态为 `analyzed` → `source-migrated` → `artifact-verified` → `runtime-verified`。`runtime-verified` 仍不能替代真实 UI、生命周期与业务行为的验证。失败现场会保留并报告路径；成功后默认清理。
+
+### 主要 API 变化
+
+`@deepseek-ai/dsh-client-runtime` 已移除，**没有聚合替代包**，各能力迁往：
+
+| 原能力 | 0.1.2 归属 | 迁移方式 |
+|---|---|---|
+| store 引擎与 equality helpers | `dsh-client-store` | 精确（catalog 已列举符号） |
+| Cordis 客户端 context 类型 | `@deepseek-ai/cordis` `Context` | 精确；保留本地别名 |
+| session 控制/列表/命令 | `dsh-api-session-controller/client` | 语义（需开发者判断） |
+| workspace 状态/命令 | `dsh-api-workspace-controller/client` | 语义 |
+| conversation 组装 | `dsh-client-ui-conversation/client` | 语义 |
+| pending interaction 状态 | ui-session 聚合的各 UI 包 | 语义 |
+
+`@deepseek-ai/dsh-host-apiproxy` 也已移除，无兼容替代，浏览器操作改用 API Remotes/API Gateway 原生 Remote 所有者。
+
+### dsh-plugin-upgrade skill
+
+包内同时提供 [`dsh-plugin-upgrade` skill](skills/dsh-plugin-upgrade/SKILL.md)，供编码 Agent（如 Claude Code）驱动完整迁移流程，确保不折叠任何安全阶段门控。Skill 描述触发条件：插件开发者寻求迁移、兼容性评估、API 替换、peer 依赖更新、产物重建或 DSH 0.1.2 运行时验证。
+
+可直接从 GitHub 仓库安装到本机支持的编码 Agent：
+
+```sh
+npx skills add bruc3van/dsh-doctor
+```
+
+仓库当前只提供一个 skill，`skills` CLI 会发现并安装 `dsh-plugin-upgrade`；需要显式选择时可加 `--skill dsh-plugin-upgrade`。该命令只安装 Agent skill，不会全局安装 DSH Doctor CLI；skill 会优先使用现有 `dsh-doctor`，不存在时按流程通过 `npx @bruc3van/dsh-doctor` 调用匹配的 CLI。
+
+---
+
+## 诊断
+
+### 诊断模型
+
+`diagnose` 从空树开始，按当前 DSH 的正式顺序组合配置：
 
 ```text
 bundle layers → profile cordis.patch.yml → home cordis.patch.yml → CLI overlays
@@ -77,11 +126,15 @@ dsh-doctor diagnose --json
 dsh-doctor diagnose --check-updates
 ```
 
-只有 `--check-updates` 和 `recover` 会访问 npm registry。离线诊断只报告 `update.status: "not-checked"`，绝不会把“未检查”写成“没有兼容版本”。
+只有 `--check-updates` 和 `recover` 会访问 npm registry。离线诊断只报告 `update.status: "not-checked"`，绝不会把"未检查"写成"没有兼容版本"。
 
-## 兼容版本检查
+---
 
-Doctor 会检查所有已发布版本的 manifest，而不是只看 `latest`，并选出声明兼容当前可解析 DSH package 版本的最高版本。结论仅表示“manifest 声明兼容的候选版本”，不代表已经通过真实启动或 UI 验证。更新始终绑定精确版本：
+## 恢复决策
+
+### 兼容版本检查
+
+Doctor 会检查所有已发布版本的 manifest，而不是只看 `latest`，并选出声明兼容当前可解析 DSH package 版本的最高版本。结论仅表示"manifest 声明兼容的候选版本"，不代表已经通过真实启动或 UI 验证。
 
 ```sh
 dsh-doctor recover @scope/plugin --action check-update
@@ -89,7 +142,7 @@ dsh-doctor recover @scope/plugin --action update       # 只预览
 dsh-doctor recover @scope/plugin --action update --yes # 执行精确版本
 ```
 
-## 临时与持久隔离
+### 临时与持久隔离
 
 没有兼容版本时，默认先生成临时 overlay，再用实际 profile 验证其余功能：
 
@@ -111,17 +164,20 @@ dsh-doctor recover @scope/plugin --action persist-quarantine --verified
 dsh-doctor recover @scope/plugin --action persist-quarantine --verified --yes
 ```
 
-持久写入会追加 profile 层最终生效的禁用覆盖；如果 home 或 CLI overlay 等更高层仍会覆盖它，Doctor 会在写入前拒绝。写入后重新组合配置并逐个验证目标 entry 确实处于 disabled 状态；验证失败会返回非零退出码。写入前重新校验 SHA-256 并原子替换文件。已有 patch 会创建 `.dsh-doctor-<timestamp>.bak`；首次新建 patch 会创建 `.rollback.json`，其中记录目标文件和创建内容哈希，以便只在文件未被再次修改时执行删除式回滚。旧的 `disabled: true` 不会自动过期，所以插件升级后应重新诊断并决定是否撤销。
+持久写入会追加 profile 层最终生效的禁用覆盖；如果 home 或 CLI overlay 等更高层仍会覆盖它，Doctor 会在写入前拒绝。写入后重新组合配置并逐个验证目标 entry 确实处于 disabled 状态；验证失败会返回非零退出码。写入前重新校验 SHA-256 并原子替换文件。已有 patch 会创建 `.dsh-doctor-<timestamp>.bak`；首次新建 patch 会创建 `.rollback.json`，其中记录目标文件和创建内容哈希，以便只在文件未被再次修改时执行删除式回滚。
 
-可先预览并显式恢复该次备份或回滚记录；Doctor 只接受属于当前 profile patch 的时间戳恢复文件：
+可先预览并显式恢复备份或回滚记录：
 
 ```sh
-dsh-doctor recover @scope/plugin --action rollback-quarantine --backup /path/to/cordis.patch.yml.dsh-doctor-...bak
-dsh-doctor recover @scope/plugin --action rollback-quarantine --backup /path/to/cordis.patch.yml.dsh-doctor-...bak --yes
-# 首次新建时，把上面的 .bak 换成命令返回的 .rollback.json
+dsh-doctor recover @scope/plugin --action rollback-quarantine \
+  --backup /path/to/cordis.patch.yml.dsh-doctor-...bak
+dsh-doctor recover @scope/plugin --action rollback-quarantine \
+  --backup /path/to/cordis.patch.yml.dsh-doctor-...bak --yes
 ```
 
-## 安全删除
+Doctor 只接受属于当前 profile patch 的时间戳恢复文件。
+
+### 安全删除
 
 删除是独立动作，永远不会由通用 `--fix --yes` 推断：
 
@@ -137,6 +193,8 @@ dsh plugin --profile web remove @scope/plugin
 ```
 
 成功后重新诊断并分别验证 dependency、bundle layer 和活跃 entry 已消失，同时保留原版本的精确回滚安装命令。静态检查无法证明不存在动态 Service 依赖、外部数据残留或所有真实业务流程都正常；完成后仍须重启 profile 并验证主要功能。
+
+---
 
 ## 历史基线
 
@@ -155,22 +213,24 @@ dsh-doctor baseline compare --output ./before-upgrade.json
 
 ## 旧版确认式修复
 
-`--fix` / `--repair` 继续兼容 0.1.x 的确定性 install、update 与 bundle manifest 修复：
+`--fix` / `--repair` 继续兼容 0.1.x 的确定性 install、update 与 bundle manifest 修复，不会触发 quarantine、持久化隔离或删除。文件动作展示路径并创建备份，命令使用固定 argv、绑定当前 `DSH_HOME`，任一步失败都会停止后续动作。
 
 ```sh
 dsh-doctor --fix
 dsh-doctor --fix --yes --json
 ```
 
-它不会触发 quarantine、持久化隔离或删除。文件动作展示路径并创建备份，命令使用固定 argv、绑定当前 `DSH_HOME`，任一步失败都会停止后续动作。
+---
 
 ## 输出与退出码
 
 文本支持中文和英文，优先级为 `--lang`、`DSH_DOCTOR_LANG`、DSH 设置和系统 locale。`--json` 始终保留稳定英文 code 和完整的非秘密证据；插件 `config` 值和其他常见秘密字段会替换为 `[REDACTED]`。
 
-- `0`：没有阻断错误，或显式动作成功且静态验证通过；
-- `1`：仍有可能阻断启动的问题，或恢复后静态状态不完整；
-- `2`：参数、运行环境或动作执行失败。
+| 退出码 | 含义 |
+|---|---|
+| `0` | 没有阻断错误，或显式动作成功且静态验证通过 |
+| `1` | 仍有可能阻断启动的问题，或恢复后静态状态不完整 |
+| `2` | 参数、运行环境或动作执行失败 |
 
 ## 安全边界
 

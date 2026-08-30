@@ -2,6 +2,25 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.5.1
+
+### 主要更新
+
+- 重写中英文 README 的信息结构，补全插件迁移三阶段、主要 API 所有权变化、诊断、恢复决策、退出码和安全边界说明。
+- 支持通过 `npx skills add bruc3van/dsh-doctor` 从 GitHub 仓库直接发现并安装 `dsh-plugin-upgrade` skill，并明确 skill 安装与 CLI 安装的边界。
+- 修正独立安装 skill 后失效的 monorepo 相对 catalog 链接，并准确区分 static gate 的 AST/manifest/产物检查与 build gate 中可选的 TypeScript typecheck 脚本。
+
+### 安装
+
+```sh
+npm install --global @bruc3van/dsh-doctor@0.5.1
+npx skills add bruc3van/dsh-doctor
+```
+
+### 验证
+
+- 验证 `skills` CLI 能从仓库发现唯一的 `dsh-plugin-upgrade` skill，并完成 skill 结构、完整测试矩阵和 npm 打包内容检查。
+
 ## v0.5.0
 
 ### 主要更新

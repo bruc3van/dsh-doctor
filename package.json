@@ -1,6 +1,6 @@
 {
   "name": "@bruc3van/dsh-doctor",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Diagnose DSH upgrades, migrate plugins with safe codemods, and verify recovery decisions",
   "license": "MIT",
   "type": "module",

@@ -29,4 +29,4 @@ Session snapshots no longer own Conversation views or all pending-interaction fa
 
 For `MIG_PATCH_TARGET_CHANGED`, first confirm the Harness checkout is exact and its tag scan succeeded. Then compare the old and target web profile bundle patches: remove an obsolete override only when the old row disappeared without a replacement, or update the id when upstream deliberately renamed/moved the row. Do not guess a replacement id from a similar name.
 
-The machine-readable source of truth is the [versioned catalog](../../../migrations/dsh-v0.1.1-rc.2__dsh-v0.1.2-alpha.2/manifest.json).
+The machine-readable source of truth ships with DSH Doctor. Confirm the installed CLI exposes this exact version pair with `dsh-doctor migrations list`; the canonical catalog source is also available in the [DSH Doctor repository](https://github.com/bruc3van/dsh-doctor/tree/master/migrations/dsh-v0.1.1-rc.2__dsh-v0.1.2-alpha.2).
