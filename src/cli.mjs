@@ -50,15 +50,28 @@ function valueAfter(args, index, name) {
   return value
 }
 
+function optionValue(arg, name) {
+  const prefix = `${name}=`
+  if (!arg.startsWith(prefix)) return undefined
+  const value = arg.slice(prefix.length)
+  if (value === '') throw new Error(`${name} needs a value`)
+  return value
+}
+
 function parse(args) {
   const options = {}
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
     if (arg === '--profile') options.profile = valueAfter(args, index++, arg)
+    else if (arg.startsWith('--profile=')) options.profile = optionValue(arg, '--profile')
     else if (arg === '--home') options.home = valueAfter(args, index++, arg)
+    else if (arg.startsWith('--home=')) options.home = optionValue(arg, '--home')
     else if (arg === '--harness-root') options.harnessRoot = valueAfter(args, index++, arg)
+    else if (arg.startsWith('--harness-root=')) options.harnessRoot = optionValue(arg, '--harness-root')
     else if (arg === '--dsh-command') options.dshCommand = valueAfter(args, index++, arg)
+    else if (arg.startsWith('--dsh-command=')) options.dshCommand = optionValue(arg, '--dsh-command')
     else if (arg === '--lang') options.lang = valueAfter(args, index++, arg)
+    else if (arg.startsWith('--lang=')) options.lang = optionValue(arg, '--lang')
     else if (arg === '--json') options.json = true
     else if (arg === '--fix' || arg === '--repair') options.fix = true
     else if (arg === '--yes') options.yes = true

@@ -3,8 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFil
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { defaultDshHome, diagnose, extractStaticRequires, formatReport } from '../src/doctor.mjs'
-import { localizedFinding } from '../src/i18n.mjs'
+import { defaultDshHome, diagnose, extractStaticRequires, formatReport, resolveDshHome } from '../src/doctor.mjs'
+import { localizedFinding, resolveLanguage } from '../src/i18n.mjs'
 import { applyRepairs, formatRepairOutcome, formatRepairPlan, repairsFromReport } from '../src/repair.mjs'
 
 function json(file, value) {
@@ -78,6 +78,17 @@ test('extractStaticRequires keeps unscoped subpaths and ignores regular expressi
     require('lodash/fp')
     require('real-package')
   `), ['lodash/fp', 'real-package'])
+})
+
+test('extractStaticRequires scans template expressions but ignores template text', () => {
+  const source = [
+    'const text = `require("template-text")`',
+    "const first = `value: ${require('template-expression')}`",
+    "const nested = `value: ${({ child: require('@scope/nested') }).child}`",
+    "const inner = `value: ${`nested: ${require('deep-expression')}`}`",
+    "const ignored = `value: ${' } require(\\\"inside-string\\\") ' /* } require('inside-comment') */}`",
+  ].join('\n')
+  assert.deepEqual(extractStaticRequires(source), ['@scope/nested', 'deep-expression', 'template-expression'])
 })
 
 test('a healthy profile passes the MVP checks', () => {
@@ -484,6 +495,16 @@ test('trims DSH_HOME before resolving it', () => {
   assert.equal(diagnose({ home: '~', profile: '..' }).context.home, homedir())
 })
 
+test('expands a tilde followed by either path separator', () => {
+  assert.equal(resolveDshHome('~/fixture-home'), join(homedir(), 'fixture-home'))
+  assert.equal(resolveDshHome('~\\fixture-home'), join(homedir(), 'fixture-home'))
+})
+
+test('uses the supplied system locale after configuration fallbacks', () => {
+  assert.equal(resolveLanguage({ env: {}, systemLocale: 'zh-SG' }), 'zh')
+  assert.equal(resolveLanguage({ env: {}, systemLocale: 'en-GB' }), 'en')
+})
+
 test('passes command repair arguments literally without a shell', () => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-doctor-command-'))
   const output = join(root, 'args.json')
@@ -773,4 +794,19 @@ test('resolves PATH, profile-linked, and explicit DSH CLI installations', () => 
     dshCommand: join(shared, 'lib', 'bin.js'),
   })
   assert.equal(report.context.dshCli.source, 'explicit')
+})
+
+test('resolves one validated project-local DSH CLI manifest result', () => {
+  const subject = fixture()
+  const project = join(subject.root, 'project')
+  const localDsh = join(project, 'node_modules', '@deepseek-ai', 'dsh')
+  json(join(localDsh, 'package.json'), {
+    name: '@deepseek-ai/dsh', version: '3.0.0', bin: { dsh: 'lib/bin.js' },
+  })
+  text(join(localDsh, 'lib', 'bin.js'), '#!/usr/bin/env node\n')
+
+  const report = diagnose({ home: subject.home, cwd: project, env: { PATH: '' } })
+  assert.equal(report.context.dshCli.source, 'project')
+  assert.equal(report.context.dshCli.version, '3.0.0')
+  assert.deepEqual(report.context.dshCli.command, [process.execPath, join(localDsh, 'lib', 'bin.js')])
 })

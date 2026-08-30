@@ -7,6 +7,9 @@ import semver from 'semver'
 import { parseDocument } from 'yaml'
 import { languageName, localizedFinding } from './i18n.mjs'
 
+// Mirrors packages/client/web/src/platform.ts in DeepSeek Harness. Installed
+// DSH packages do not expose this source list, so update this baseline when
+// Harness changes PLATFORM_MODULES.
 export const PLATFORM_MODULES = new Set([
   'react',
   'react/jsx-runtime',
@@ -168,11 +171,12 @@ function manifestBin(packageDir) {
   }
 }
 
-function localDshPackage(start) {
+function localDshBin(start) {
   let current = resolve(start)
   while (true) {
     const packageDir = join(current, 'node_modules', '@deepseek-ai', 'dsh')
-    if (manifestBin(packageDir) !== undefined) return packageDir
+    const bin = manifestBin(packageDir)
+    if (bin !== undefined) return bin
     const parent = dirname(current)
     if (parent === current) return undefined
     current = parent
@@ -218,10 +222,9 @@ function resolveDshCli(options, harness, home) {
     if (bin !== undefined) return { command: [process.execPath, bin.bin], path: bin.bin, source: 'profile', version: bin.version }
   }
 
-  const localPackage = localDshPackage(cwd)
-  if (localPackage !== undefined) {
-    const bin = manifestBin(localPackage)
-    return { command: [process.execPath, bin.bin], path: bin.bin, source: 'project', version: bin.version }
+  const localBin = localDshBin(cwd)
+  if (localBin !== undefined) {
+    return { command: [process.execPath, localBin.bin], path: localBin.bin, source: 'project', version: localBin.version }
   }
 
   const pathCommand = executableOnPath('dsh', env)
@@ -422,6 +425,7 @@ function codePositions(source) {
   const code = new Uint8Array(source.length)
   let state = 'code'
   let regexClass = false
+  const templateExpressions = []
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index]
     const next = source[index + 1]
@@ -432,11 +436,25 @@ function codePositions(source) {
       } else if (char === '/' && next === '*') {
         state = 'block-comment'
         index += 1
-      } else if (char === "'" || char === '"' || char === '`') {
+      } else if (char === "'" || char === '"') {
         state = char
+      } else if (char === '`') {
+        state = 'template'
       } else if (char === '/' && regexCanStart(source, index)) {
         state = 'regex'
         regexClass = false
+      } else if (templateExpressions.length > 0 && char === '{') {
+        templateExpressions[templateExpressions.length - 1] += 1
+        code[index] = 1
+      } else if (templateExpressions.length > 0 && char === '}') {
+        const last = templateExpressions.length - 1
+        templateExpressions[last] -= 1
+        if (templateExpressions[last] === 0) {
+          templateExpressions.pop()
+          state = 'template'
+        } else {
+          code[index] = 1
+        }
       } else {
         code[index] = 1
       }
@@ -456,6 +474,14 @@ function codePositions(source) {
       else if (char === ']') regexClass = false
       else if (char === '/' && !regexClass) state = 'code'
       else if (char === '\n' || char === '\r') state = 'code'
+    } else if (state === 'template') {
+      if (char === '\\') index += 1
+      else if (char === '`') state = 'code'
+      else if (char === '$' && next === '{') {
+        templateExpressions.push(1)
+        state = 'code'
+        index += 1
+      }
     } else if (char === '\\') {
       index += 1
     } else if (char === state) {
@@ -1425,7 +1451,7 @@ export function formatReport(report, options = {}) {
     : zh ? '未找到（命令型修复已禁用）' : 'not found (command-based repairs disabled)'
   const lines = [
     'DSH Doctor',
-    `${zh ? 'Profile' : 'Profile'}: ${report.context.profile}`,
+    `Profile: ${report.context.profile}`,
     `${zh ? 'DSH 主目录' : 'Home'}: ${report.context.home}`,
     `${zh ? '当前使用的 DSH' : 'Active DSH'}: ${report.context.harness.version ?? 'unknown'}${report.context.harness.root ? ` (${report.context.harness.root})` : ''}`,
     `${zh ? 'DSH CLI' : 'DSH CLI'}: ${cliText}`,

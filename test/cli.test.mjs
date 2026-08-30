@@ -49,6 +49,22 @@ test('CLI exposes the package version and repair flags', () => {
   assert.match(helpWithIrrelevantFlags.stdout, /^(?:Usage:|用法：)/)
 })
 
+test('CLI accepts equals-separated option values', () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-doctor-cli-equals-'))
+  const profile = join(home, 'profiles', 'custom')
+  mkdirSync(profile, { recursive: true })
+  writeFileSync(join(profile, 'package.json'), 'null\n')
+
+  const result = spawnSync(process.execPath, [
+    cli, `--home=${home}`, '--profile=custom', '--lang=en', '--json',
+  ], { encoding: 'utf8' })
+  assert.equal(result.status, 1)
+  const report = JSON.parse(result.stdout)
+  assert.equal(report.context.home, home)
+  assert.equal(report.context.profile, 'custom')
+  assert.deepEqual(report.findings.map(item => item.code), ['INVALID_JSON_OBJECT'])
+})
+
 test('CLI applies a confirmed repair, creates a backup, and re-diagnoses', () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-doctor-fix-'))
   const profile = join(home, 'profiles', 'web')

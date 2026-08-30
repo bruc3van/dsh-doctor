@@ -2,6 +2,29 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.1.6
+
+### 主要更新
+
+- 消除项目本地 DSH CLI 解析中的二次 manifest 读取，避免文件在检查期间变化时产生空值解引用。
+- 完善 client bundle 静态扫描：忽略模板字符串正文，同时识别 `${...}` 表达式及嵌套模板中的静态 `require()`。
+- 命令行值参数支持 `--profile=web`、`--home=/path`、`--harness-root=/path`、`--dsh-command=/path` 和 `--lang=en` 形式；以 `-` 开头的路径可以通过 `=` 安全传入。
+- 对照当前 DeepSeek Harness 源码确认平台模块基线，并在源码中记录正式同步位置。
+- 增加项目本地 CLI、模板表达式、两种用户目录分隔符和系统 locale 回退的回归测试。
+
+### 安装
+
+```sh
+npm install --global @bruc3van/dsh-doctor@0.1.6
+dsh-doctor
+```
+
+### 验证
+
+- 53 项测试全部通过。
+- 已覆盖模板字符串嵌套、对象花括号、字符串与注释隔离、等号参数、项目本地 CLI、`~/` 与 `~\` 路径，以及中英文系统 locale 回退。
+- GitHub Actions 继续覆盖 macOS、Ubuntu 和 Windows，以及 Node.js 22.19 和 24。
+
 ## v0.1.5
 
 ### 主要更新
