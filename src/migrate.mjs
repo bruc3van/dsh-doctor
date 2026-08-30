@@ -62,9 +62,13 @@ function packageRoot(moduleName) {
   return moduleName.split('/')[0]
 }
 
+function relativePath(root, file) {
+  return relative(root, file).split('\\').join('/')
+}
+
 function location(source, node, pluginRoot) {
   const point = source.getLineAndCharacterOfPosition(node.getStart(source))
-  return { file: relative(pluginRoot, source.fileName), line: point.line + 1, column: point.character + 1 }
+  return { file: relativePath(pluginRoot, source.fileName), line: point.line + 1, column: point.character + 1 }
 }
 
 function moduleLiteral(node) {
@@ -234,8 +238,8 @@ function opaqueReferenceFindings(pluginRoot, sourceFiles, manifest, catalog) {
       findings.push({
         code: documentationOnly ? 'MIG_DOCUMENTATION_REFERENCE' : 'MIG_UNSUPPORTED_SOURCE_REFERENCE',
         severity: documentationOnly ? 'warning' : 'error',
-        message: documentationOnly ? `${relative(pluginRoot, file)} documents removed package ${name}` : `${relative(pluginRoot, file)} references removed package ${name} in a file that has no safe codemod`,
-        location: { file: relative(pluginRoot, file), line: before.split('\n').length, column: index - before.lastIndexOf('\n') },
+        message: documentationOnly ? `${relativePath(pluginRoot, file)} documents removed package ${name}` : `${relativePath(pluginRoot, file)} references removed package ${name} in a file that has no safe codemod`,
+        location: { file: relativePath(pluginRoot, file), line: before.split('\n').length, column: index - before.lastIndexOf('\n') },
         evidence: { package: name },
         autoFix: 'none',
       })
@@ -276,7 +280,7 @@ function patchTargetFindings(pluginRoot, manifest, harness) {
         code: 'MIG_PATCH_TARGET_CHANGED',
         severity: 'error',
         message: fromIds.has(id) ? `patch target ${id} existed in 0.1.1 but is absent from 0.1.2` : `patch target ${id} is not present in the target Harness bundles`,
-        location: { file: relative(pluginRoot, file) },
+        location: { file: relativePath(pluginRoot, file) },
         evidence: { id, existedInSource: fromIds.has(id), existsInTarget: false },
         autoFix: 'none',
       })
@@ -350,7 +354,7 @@ export function analyzeMigration(pluginRoot = process.cwd(), options = {}) {
   const manifestPlan = planManifest(manifest, sources, artifacts, opaqueReferences.packages, catalog)
   const changed = [...sources.filter(item => item.changed), ...(manifestPlan.changed ? [manifestPlan] : [])]
   const safeEdits = changed.map(item => ({
-    file: relative(root, item.file),
+    file: relativePath(root, item.file),
     beforeHash: sha256(item.text),
     afterHash: sha256(item.nextText),
     changes: item.changes ?? item.findings.filter(finding => finding.autoFix === 'safe').map(finding => ({ kind: 'move-import', ...finding.evidence })),

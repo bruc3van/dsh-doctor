@@ -10,6 +10,7 @@
 - 新增 `migrate analyze`，使用 TypeScript AST 同时检查源码、`import type`、动态引用、非 JS/TS 配置与组件引用、package manifest、DSH/Cordis peer range、client inject/external 和构建产物，输出稳定 JSON finding code 与语义待办；官方 patch target 只取 web profile 的正式 bundle，排除测试 fixture。
 - 新增 `migrate apply --safe`：默认仅预览，只改写 catalog 确认的 exact 符号；显式 `--yes` 后进行 SHA-256 并发校验、同目录原子写入和时间戳备份，语义 API 不做机械替换。
 - 新增 `migrate verify --level static|build|runtime`；构建和运行时执行需 `--yes`，artifact gate 要求真实 `build`/`pack:check` 并在首个失败处停止；运行时从真实插件 tarball 创建隔离 `DSH_HOME`，核验目标 CLI 版本、profile、安装包、bundle、有效配置和激活 smoke，失败时保留现场。
+- 迁移报告中的相对文件路径统一使用跨平台 `/`，项目脚本通过跨平台命令解析执行，确保 Windows 下的 build/runtime gate 与 macOS、Linux 行为一致。
 - 随 npm 包提供 `dsh-plugin-upgrade` skill、迁移参考资料与三类评测场景，明确 `analyzed`、`source-migrated`、`artifact-verified`、`runtime-verified` 和独立业务行为验证边界。
 
 ### 安装

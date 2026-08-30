@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import crossSpawn from 'cross-spawn'
 import { analyzeMigration, publicMigrationReport } from './migrate.mjs'
 import { sha256 } from './safe-write.mjs'
 
 function commandResult(command, args, options = {}) {
   const started = Date.now()
-  const result = spawnSync(command, args, {
+  const result = crossSpawn.sync(command, args, {
     cwd: options.cwd,
     env: options.env,
     encoding: 'utf8',
