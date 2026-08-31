@@ -99,11 +99,11 @@ Source analysis uses the TypeScript AST and is cross-checked against the manifes
 ## Safety
 
 - `diagnose`, `migrate analyze`, and static verification are read-only and do not load or execute the inspected plugin;
-- `migrate apply` requires `--safe`; without `--yes`, it only previews changes;
+- `migrate apply` requires `--safe --plan-file`; preview only creates a new plan outside the plugin root, never overwrites an existing file, and persists the complete analysis plus every input-file hash; `--yes` applies only that same reviewed plan;
 - only `exact` migrations are auto-edited; semantic changes are not guessed;
 - SHA-256 is checked before writing, so a file changed after preview is rejected;
 - existing files receive timestamped backups and are replaced atomically through a temporary file;
-- build and runtime verification execute plugin scripts and therefore require explicit `--yes`;
+- build and runtime verification synchronize dependencies and execute plugin scripts, so they require explicit `--yes --install`; install lifecycle scripts are disabled and lockfile plus resolved-version evidence is recorded;
 - runtime verification uses a temporary `DSH_HOME`, not the normal `~/.dsh`;
 - JSON, baselines, and recovery snapshots redact plugin configuration and common secret/token/password/key fields;
 - global CLI installation, persistent quarantine, plugin removal, and publishing are never performed automatically by the skill.
@@ -115,7 +115,7 @@ Node.js `^22.19.0` or `>=24.0.0` is required.
 First confirm that the CLI contains the required migration:
 
 ```sh
-npx --yes --package=@bruc3van/dsh-doctor@0.5.4 \
+npx --yes --package=@bruc3van/dsh-doctor@0.5.5 \
   dsh-doctor migrations list
 ```
 
@@ -136,31 +136,33 @@ Analysis checks source, dependencies, manifest, client graph, patch targets, and
 ```sh
 # Preview
 dsh-doctor migrate apply /path/to/plugin --safe \
+  --plan-file /temporary/path/reviewed-migration-plan.json \
   --harness-root /path/to/deepseek-harness --json
 
 # Write after confirmation
 dsh-doctor migrate apply /path/to/plugin --safe --yes \
+  --plan-file /temporary/path/reviewed-migration-plan.json \
   --harness-root /path/to/deepseek-harness --json
 ```
 
-Apply can split mixed imports, move exact symbols, leave semantic symbols in place, and update development dependencies when the change is known. Every changed file receives a backup.
+The plan must stay outside the plugin root so it is not analyzed as plugin input. Apply checks the plan digest, every analyzed input, and each edit's before/after hashes; source, manifest, or other analyzed-input changes require a new reviewed plan. Deterministic dependency edits use catalog-owned Client/Host and peer/dev policies instead of inheriting the removed package's dependency section. Every changed file receives a backup.
 
 ### 3. Verify
 
 ```sh
 dsh-doctor migrate verify /path/to/plugin --level static \
   --harness-root /path/to/deepseek-harness --json
-dsh-doctor migrate verify /path/to/plugin --level build --yes \
+dsh-doctor migrate verify /path/to/plugin --level build --yes --install \
   --harness-root /path/to/deepseek-harness --json
-dsh-doctor migrate verify /path/to/plugin --level runtime --yes \
+dsh-doctor migrate verify /path/to/plugin --level runtime --yes --install \
   --harness-root /path/to/deepseek-harness --json
 ```
 
 | Level | What it checks |
 |---|---|
 | `static` | Rechecks source, manifest, client graph, patches, and artifacts |
-| `build` | Runs the plugin's existing build/test scripts and scans the output again |
-| `runtime` | Packs the real tarball and checks the target DSH version, installed package, bundle, and effective configuration in a temporary profile |
+| `build` | Synchronizes and verifies target dependencies and the lockfile, then runs build/test scripts and scans output again |
+| `runtime` | After dependency and build gates, packs the real tarball and checks target DSH, installed package, bundle, and effective configuration in a temporary profile |
 
 Verification states are:
 

@@ -99,11 +99,11 @@ Migration catalog 保存 source/target tag 和 Git commit，并记录 package、
 ## 安全性
 
 - `diagnose`、`migrate analyze` 和静态验证只读，不加载或执行待检查插件；
-- `migrate apply` 必须带 `--safe`，没有 `--yes` 时只展示将要修改的内容；
+- `migrate apply` 必须带 `--safe --plan-file`；预览只会新建插件目录外的 plan，不会覆盖已有文件，并把完整分析和所有输入文件哈希固化下来；`--yes` 只应用同一个已审阅 plan；
 - 只有 `exact` 迁移会自动改代码，语义变化不会自动猜测；
 - 写入前检查文件 SHA-256，预览后文件发生变化会拒绝写入；
 - 修改已有文件前创建时间戳备份，并使用临时文件原子替换；
-- build 和 runtime 会执行插件脚本，因此必须显式使用 `--yes`；
+- build 和 runtime 会同步依赖并执行插件脚本，因此必须显式使用 `--yes --install`；依赖安装禁用 lifecycle scripts，并记录 lockfile 和实际解析版本证据；
 - runtime 使用临时 `DSH_HOME`，不会安装到正常的 `~/.dsh`；
 - JSON、baseline 和恢复快照会脱敏插件配置和常见 secret/token/password/key 字段；
 - 全局 CLI 安装、持久隔离、删除插件和发布都不会由 Skill 自动执行。
@@ -115,7 +115,7 @@ Migration catalog 保存 source/target tag 和 Git commit，并记录 package、
 先确认 CLI 包含需要的迁移：
 
 ```sh
-npx --yes --package=@bruc3van/dsh-doctor@0.5.4 \
+npx --yes --package=@bruc3van/dsh-doctor@0.5.5 \
   dsh-doctor migrations list
 ```
 
@@ -136,31 +136,33 @@ dsh-doctor migrate analyze /path/to/plugin \
 ```sh
 # 预览
 dsh-doctor migrate apply /path/to/plugin --safe \
+  --plan-file /temporary/path/reviewed-migration-plan.json \
   --harness-root /path/to/deepseek-harness --json
 
 # 确认后写入
 dsh-doctor migrate apply /path/to/plugin --safe --yes \
+  --plan-file /temporary/path/reviewed-migration-plan.json \
   --harness-root /path/to/deepseek-harness --json
 ```
 
-Apply 可以拆分混合 import、移动精确 symbol、保留语义 symbol，并更新确定可以调整的开发依赖。每个被修改的文件都会保留备份。
+Plan 必须放在插件目录外，避免被当成插件输入。Apply 会核对 plan digest、完整分析输入和每个修改的 before/after hash；源码、manifest 或其他分析输入在预览后变化时必须重新生成并审阅 plan。确定性依赖改写使用 catalog 明确的 Client/Host 与 peer/dev 策略，不再沿用旧包所在的 dependency section。每个被修改的文件都会保留备份。
 
 ### 3. 验证
 
 ```sh
 dsh-doctor migrate verify /path/to/plugin --level static \
   --harness-root /path/to/deepseek-harness --json
-dsh-doctor migrate verify /path/to/plugin --level build --yes \
+dsh-doctor migrate verify /path/to/plugin --level build --yes --install \
   --harness-root /path/to/deepseek-harness --json
-dsh-doctor migrate verify /path/to/plugin --level runtime --yes \
+dsh-doctor migrate verify /path/to/plugin --level runtime --yes --install \
   --harness-root /path/to/deepseek-harness --json
 ```
 
 | 级别 | 验证内容 |
 |---|---|
 | `static` | 再次检查源码、manifest、client graph、patch 和产物 |
-| `build` | 运行插件已有的构建与测试脚本，并在构建后重新扫描产物 |
-| `runtime` | 打真实 tarball，在临时 profile 中验证目标 DSH 版本、安装包、bundle 和生效配置 |
+| `build` | 先同步并核验目标依赖和 lockfile，再运行已有构建/测试脚本并重新扫描产物 |
+| `runtime` | 完成依赖与构建门后，打真实 tarball，在临时 profile 中验证目标 DSH、安装包、bundle 和生效配置 |
 
 验证状态依次是：
 

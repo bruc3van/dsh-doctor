@@ -25,6 +25,16 @@ Session snapshots no longer own Conversation views or all pending-interaction fa
 - React, Cordis, client-store, ui-slots, and ui-primitives baseline modules are implicit and should not be repeated in `dsh.client.external`.
 - A declared web client requires a published `exports["./client"]` artifact.
 
+## Dependency ownership
+
+An exact symbol move and its npm dependency placement are separate catalog decisions. The current target policy records Client relationships explicitly:
+
+- Cordis must be present in matching `peerDependencies` and `devDependencies` for a client plugin;
+- `dsh-client-store` and `dsh-session` Client/type relationships are development-only;
+- existing published peer ranges are not widened automatically merely because a development dependency is pinned to the target catalog version.
+
+Do not copy a replacement package into every dependency section that contained `dsh-client-runtime`. After apply, use the dependency verification gate to synchronize the lockfile and confirm the versions actually resolved in `node_modules`.
+
 ## Patch targets
 
 For `MIG_PATCH_TARGET_CHANGED`, first confirm the Harness checkout is exact and its tag scan succeeded. Then compare the old and target web profile bundle patches: remove an obsolete override only when the old row disappeared without a replacement, or update the id when upstream deliberately renamed/moved the row. Do not guess a replacement id from a similar name.

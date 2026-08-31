@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { analyzeMigration, applyMigration, publicMigrationReport } from '../src/migrate.mjs'
-import { verifyMigration } from '../src/migrate-verify.mjs'
+import { installedDependencyEvidence, verifyMigration } from '../src/migrate-verify.mjs'
 import { loadMigration, verifyHarnessCheckout } from '../src/migration-catalog.mjs'
 
 function fixture(options = {}) {
@@ -21,6 +21,16 @@ function fixture(options = {}) {
   return root
 }
 
+function migrationPlanFile() {
+  return join(mkdtempSync(join(tmpdir(), 'dsh-doctor-plan-')), 'migration-plan.json')
+}
+
+function applyWithReviewedPlan(root, options = {}) {
+  const planFile = options.planFile ?? migrationPlanFile()
+  applyMigration(analyzeMigration(root), { safe: true, planFile })
+  return applyMigration(analyzeMigration(root), { safe: true, yes: true, planFile })
+}
+
 test('migration analysis finds type-only exact and semantic imports without exposing source text', () => {
   const root = fixture({ source: "import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'\nexport type State = [ClientContext, ISessions]\n" })
   const report = analyzeMigration(root)
@@ -28,6 +38,9 @@ test('migration analysis finds type-only exact and semantic imports without expo
   assert.ok(report.findings.some(item => item.code === 'MIG_MOVED_SYMBOL' && item.evidence.symbol === 'ClientContext'))
   assert.ok(report.findings.some(item => item.code === 'MIG_SEMANTIC_API_CHANGE' && item.evidence.symbol === 'ISessions'))
   assert.ok(report.semanticTasks.some(item => item.symbol === 'ISessions'))
+  assert.ok(report.semanticTasks.some(item => item.symbol === 'ISessions' && item.targetModule === '@deepseek-ai/dsh-api-session-controller/client'))
+  assert.ok(report.sourceInvestigation.semanticTargets.includes('@deepseek-ai/dsh-api-session-controller/client'))
+  assert.equal(report.migration.references.clientRules, 'packages/client/AGENTS.md')
   assert.equal(JSON.stringify(publicMigrationReport(report)).includes('export type State'), false)
 })
 
@@ -39,11 +52,12 @@ test('migration analysis detects standalone removed-package string literals', ()
 
 test('safe apply splits mixed imports, preserves semantic work, and writes backups', () => {
   const root = fixture({ source: "import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'\nexport type State = [ClientContext, ISessions]\n" })
-  const preview = applyMigration(analyzeMigration(root), { safe: true })
+  const planFile = migrationPlanFile()
+  const preview = applyMigration(analyzeMigration(root), { safe: true, planFile })
   assert.equal(preview.mode, 'preview')
   assert.equal(readFileSync(join(root, 'src', 'client.ts'), 'utf8').includes("from '@deepseek-ai/cordis'"), false)
 
-  const applied = applyMigration(analyzeMigration(root), { safe: true, yes: true })
+  const applied = applyMigration(analyzeMigration(root), { safe: true, yes: true, planFile })
   assert.equal(applied.mode, 'applied')
   const source = readFileSync(join(root, 'src', 'client.ts'), 'utf8')
   assert.match(source, /import type \{ ISessions \} from '@deepseek-ai\/dsh-client-runtime\/client'/)
@@ -54,13 +68,42 @@ test('safe apply splits mixed imports, preserves semantic work, and writes backu
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   assert.equal(manifest.peerDependencies['@deepseek-ai/dsh-client-runtime'], '^0.1.1')
   assert.equal(manifest.peerDependencies['@deepseek-ai/cordis'], '4.0.2')
+  assert.equal(manifest.devDependencies['@deepseek-ai/cordis'], '4.0.2')
 })
 
 test('safe apply rejects a file changed after analysis', () => {
   const root = fixture()
+  const planFile = migrationPlanFile()
   const report = analyzeMigration(root)
+  applyMigration(report, { safe: true, planFile })
   writeFileSync(join(root, 'src', 'client.ts'), `${readFileSync(join(root, 'src', 'client.ts'), 'utf8')}// concurrent edit\n`)
-  assert.throws(() => applyMigration(report, { safe: true, yes: true }), /changed after the preview/)
+  assert.throws(() => applyMigration(analyzeMigration(root), { safe: true, yes: true, planFile }), /analysis changed after the preview/)
+})
+
+test('safe apply rejects a plan file inside the plugin and a tampered plan', () => {
+  const root = fixture()
+  assert.throws(() => applyMigration(analyzeMigration(root), { safe: true, planFile: join(root, 'migration-plan.json') }), /outside the plugin root/)
+
+  const existingPlanFile = migrationPlanFile()
+  writeFileSync(existingPlanFile, 'preserve this file\n')
+  assert.throws(() => applyMigration(analyzeMigration(root), { safe: true, planFile: existingPlanFile }), /already exists/)
+  assert.equal(readFileSync(existingPlanFile, 'utf8'), 'preserve this file\n')
+
+  const planFile = migrationPlanFile()
+  applyMigration(analyzeMigration(root), { safe: true, planFile })
+  const plan = JSON.parse(readFileSync(planFile, 'utf8'))
+  plan.edits[0].afterHash = '0'.repeat(64)
+  writeFileSync(planFile, `${JSON.stringify(plan, null, 2)}\n`)
+  assert.throws(() => applyMigration(analyzeMigration(root), { safe: true, yes: true, planFile }), /digest does not match/)
+})
+
+test('safe apply binds analyzed inputs larger than two MiB', () => {
+  const root = fixture()
+  writeFileSync(join(root, 'src', 'semantic.ts'), `import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'\n${' '.repeat(2 * 1024 * 1024 + 100)}`)
+  const planFile = migrationPlanFile()
+  applyMigration(analyzeMigration(root), { safe: true, planFile })
+  writeFileSync(join(root, 'src', 'semantic.ts'), `${readFileSync(join(root, 'src', 'semantic.ts'), 'utf8')}// changed after preview\n`)
+  assert.throws(() => applyMigration(analyzeMigration(root), { safe: true, yes: true, planFile }), /analysis changed after the preview/)
 })
 
 test('safe apply retains a removed dependency when unsupported source or config still references it', () => {
@@ -72,30 +115,39 @@ test('safe apply retains a removed dependency when unsupported source or config 
     writeFileSync(join(root, extra.file), extra.text)
     const before = analyzeMigration(root)
     assert.ok(before.findings.some(item => item.code === 'MIG_UNSUPPORTED_SOURCE_REFERENCE' && item.location.file === extra.file))
-    const applied = applyMigration(before, { safe: true, yes: true })
+    const applied = applyWithReviewedPlan(root)
     const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
     assert.equal(manifest.peerDependencies['@deepseek-ai/dsh-client-runtime'], '^0.1.1')
     assert.equal(applied.report.verification.passed, false)
   }
 
   const root = fixture({ manifest: { imports: { '#legacy': '@deepseek-ai/dsh-client-runtime/client' } } })
-  applyMigration(analyzeMigration(root), { safe: true, yes: true })
+  applyWithReviewedPlan(root)
   assert.equal(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).peerDependencies['@deepseek-ai/dsh-client-runtime'], '^0.1.1')
 })
 
 test('exact-only migration removes the runtime dependency after applying', () => {
   const root = fixture()
   assert.equal(verifyMigration(root, { level: 'static' }).passed, false)
-  const applied = applyMigration(analyzeMigration(root), { safe: true, yes: true })
+  const applied = applyWithReviewedPlan(root)
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   assert.equal(manifest.peerDependencies['@deepseek-ai/dsh-client-runtime'], undefined)
   assert.equal(manifest.peerDependencies['@deepseek-ai/cordis'], '4.0.2')
+  assert.equal(manifest.devDependencies['@deepseek-ai/cordis'], '4.0.2')
   assert.equal(applied.report.findings.some(item => item.code === 'MIG_REMOVED_PACKAGE_REFERENCE'), false)
+})
+
+test('catalog dependency policy keeps client-store type relationships development-only', () => {
+  const root = fixture({ source: "import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-runtime/client'\nexport type State = ObservableSnapshot<string>\n" })
+  applyWithReviewedPlan(root)
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  assert.equal(manifest.peerDependencies['@deepseek-ai/dsh-client-store'], undefined)
+  assert.equal(manifest.devDependencies['@deepseek-ai/dsh-client-store'], '0.1.2-alpha.2')
 })
 
 test('a source comment mentioning the removed package does not block exact dependency cleanup', () => {
   const root = fixture({ source: "// migrated from @deepseek-ai/dsh-client-runtime\nimport type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'\nexport type PluginContext = ClientContext\n" })
-  applyMigration(analyzeMigration(root), { safe: true, yes: true })
+  applyWithReviewedPlan(root)
   assert.equal(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).peerDependencies['@deepseek-ai/dsh-client-runtime'], undefined)
 })
 
@@ -128,7 +180,7 @@ test('safe apply pins target DSH development packages without widening peer cont
     peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.1' },
     devDependencies: { '@deepseek-ai/dsh-settings': '^0.1.1' },
   } })
-  applyMigration(analyzeMigration(root), { safe: true, yes: true })
+  applyWithReviewedPlan(root)
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   assert.equal(manifest.devDependencies['@deepseek-ai/dsh-settings'], '0.1.2-alpha.2')
   assert.equal(manifest.peerDependencies['@deepseek-ai/dsh-settings'], '^0.1.1')
@@ -145,6 +197,55 @@ test('dependency checks reject non-registry DSH ranges and incompatible Cordis r
   assert.equal(report.verification.passed, false)
 })
 
+test('migration analysis validates client platform and immediately fields', () => {
+  const root = fixture({ source: 'export const ready = true\n', manifest: {
+    peerDependencies: {},
+    dsh: { client: { platform: 1, immediately: 'yes' } },
+    exports: { './client': './lib/client.js' },
+  } })
+  const report = analyzeMigration(root)
+  assert.ok(report.findings.some(item => item.code === 'MIG_INVALID_MANIFEST' && item.evidence.field === 'dsh.client.platform'))
+  assert.ok(report.findings.some(item => item.code === 'MIG_INVALID_MANIFEST' && item.evidence.field === 'dsh.client.immediately'))
+  assert.equal(report.verification.passed, false)
+})
+
+test('migration analysis scans top-level out as build output', () => {
+  const root = fixture({ source: 'export const ready = true\n', manifest: { peerDependencies: {} } })
+  mkdirSync(join(root, 'out'), { recursive: true })
+  writeFileSync(join(root, 'out', 'client.js'), "import '@deepseek-ai/dsh-client-runtime/client'\n")
+  const report = analyzeMigration(root)
+  assert.ok(report.findings.some(item => item.location.file === 'out/client.js' && item.code === 'MIG_REMOVED_PACKAGE_REFERENCE'))
+  assert.ok(report.findings.some(item => item.code === 'MIG_SOURCE_ARTIFACT_DRIFT' && item.evidence.artifactDirectories.includes('out')))
+})
+
+test('resolved dependency evidence covers required and optional peers', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-doctor-resolved-deps-'))
+  const cordisRoot = join(root, 'node_modules', '@deepseek-ai', 'cordis')
+  mkdirSync(cordisRoot, { recursive: true })
+  writeFileSync(join(cordisRoot, 'package.json'), JSON.stringify({ name: '@deepseek-ai/cordis', version: '4.0.2' }))
+
+  let evidence = installedDependencyEvidence(root, {
+    devDependencies: { '@deepseek-ai/cordis': '4.0.2' },
+    peerDependencies: { '@deepseek-ai/cordis': '^4.0.0', '@deepseek-ai/dsh-optional': '^0.1.2-alpha.2' },
+    peerDependenciesMeta: { '@deepseek-ai/dsh-optional': { optional: true } },
+  })
+  const cordis = evidence.find(item => item.name === '@deepseek-ai/cordis')
+  assert.equal(cordis.passed, true)
+  assert.deepEqual(cordis.declarations.map(item => item.field), ['devDependencies', 'peerDependencies'])
+  assert.deepEqual(evidence.find(item => item.name === '@deepseek-ai/dsh-optional'), {
+    name: '@deepseek-ai/dsh-optional',
+    declarations: [{ field: 'peerDependencies', range: '^0.1.2-alpha.2', optional: true }],
+    installed: false,
+    optional: true,
+    passed: true,
+    status: 'optional-missing',
+  })
+
+  evidence = installedDependencyEvidence(root, { peerDependencies: { '@deepseek-ai/cordis': '^3.0.0', '@deepseek-ai/dsh-required': '*' } })
+  assert.equal(evidence.find(item => item.name === '@deepseek-ai/cordis').passed, false)
+  assert.equal(evidence.find(item => item.name === '@deepseek-ai/dsh-required').passed, false)
+})
+
 test('stale artifacts fail static verification after source migration', () => {
   const root = fixture({ source: 'export const ready = true\n', manifest: { peerDependencies: {} } })
   mkdirSync(join(root, 'lib'), { recursive: true })
@@ -157,7 +258,10 @@ test('stale artifacts fail static verification after source migration', () => {
 test('build verification requires consent and reports output hashes instead of raw command output', () => {
   const root = fixture({ source: 'export const ready = true\n', manifest: { peerDependencies: {}, scripts: { build: 'node -e "console.log(\\\"build-output-sentinel\\\")"' } } })
   assert.throws(() => verifyMigration(root, { level: 'build' }), /requires --yes/)
-  const result = verifyMigration(root, { level: 'build', yes: true })
+  assert.throws(() => verifyMigration(root, { level: 'build', yes: true }), /requires --install/)
+  const result = verifyMigration(root, { level: 'build', yes: true, install: true })
+  assert.equal(result.stages.find(item => item.name === 'dependencies').passed, true)
+  assert.equal(result.stages.find(item => item.name === 'dependencies').lockfile.file, 'package-lock.json')
   assert.equal(result.stages.find(item => item.name === 'build').passed, true)
   assert.equal(result.status, 'artifact-verified')
   assert.equal(JSON.stringify(result).includes('build-output-sentinel'), false)
@@ -166,7 +270,7 @@ test('build verification requires consent and reports output hashes instead of r
 
 test('test or typecheck alone cannot claim artifact verification and build failures short-circuit later scripts', () => {
   let root = fixture({ source: 'export const ready = true\n', manifest: { peerDependencies: {}, scripts: { test: 'node -e "process.exit(0)"' } } })
-  let result = verifyMigration(root, { level: 'build', yes: true })
+  let result = verifyMigration(root, { level: 'build', yes: true, install: true })
   assert.equal(result.passed, false)
   assert.match(result.stages.find(item => item.name === 'build').note, /requires a build or pack:check/)
 
@@ -174,8 +278,16 @@ test('test or typecheck alone cannot claim artifact verification and build failu
     build: 'node -e "process.exit(1)"',
     test: 'node -e "process.exit(0)"',
   } } })
-  result = verifyMigration(root, { level: 'build', yes: true })
+  result = verifyMigration(root, { level: 'build', yes: true, install: true })
   assert.deepEqual(result.stages.find(item => item.name === 'build').commands.map(item => item.name), ['build'])
+})
+
+test('build verification stops before dependency installation when static preflight fails', () => {
+  const root = fixture({ source: "import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'\n", manifest: { scripts: { build: 'node -e "process.exit(0)"' } } })
+  const result = verifyMigration(root, { level: 'build', yes: true, install: true })
+  assert.equal(result.passed, false)
+  assert.deepEqual(result.stages.map(item => item.name), ['preflight-static'])
+  assert.equal(existsSync(join(root, 'package-lock.json')), false)
 })
 
 test('runtime verification packs the real fixture and uses an isolated temporary DSH_HOME', () => {
@@ -202,7 +314,7 @@ else if (args[0] === 'plugin') {
 else if (args.includes('--help')) process.stdout.write('fixture help\\n')
 else process.exit(4)
 `)
-  const result = verifyMigration(root, { level: 'runtime', yes: true, dshCommand: fakeDsh })
+  const result = verifyMigration(root, { level: 'runtime', yes: true, install: true, dshCommand: fakeDsh })
   assert.equal(result.passed, true)
   assert.equal(result.status, 'runtime-verified')
   assert.equal(result.stages.find(item => item.name === 'runtime').commands.length, 3)
@@ -221,7 +333,7 @@ test('runtime verification rejects a no-op command that only exits successfully'
   const root = fixture({ source: 'export const ready = true\n', manifest: { peerDependencies: {}, scripts: { build: 'node -e "process.exit(0)"' } } })
   const fakeDsh = join(root, 'noop-dsh.mjs')
   writeFileSync(fakeDsh, "if (process.argv.includes('--version')) process.stdout.write('0.1.2-alpha.2\\n')\n")
-  const result = verifyMigration(root, { level: 'runtime', yes: true, dshCommand: fakeDsh })
+  const result = verifyMigration(root, { level: 'runtime', yes: true, install: true, dshCommand: fakeDsh })
   assert.equal(result.passed, false)
   assert.equal(result.status, 'artifact-verified')
   assert.equal(result.stages.find(item => item.name === 'runtime').profileEvidence.profileCreated, false)
@@ -272,18 +384,35 @@ test('CLI lists catalogs and reports migration failures as one JSON document', (
   assert.equal(JSON.parse(result.stdout).migrations[0].to.ref, 'dsh-v0.1.2-alpha.2')
 
   const root = fixture({ source: "import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'\n" })
+  const planFile = migrationPlanFile()
   result = spawnSync(process.execPath, [cli, 'migrate', 'analyze', root, '--json'], { encoding: 'utf8' })
   assert.equal(result.status, 1)
   const report = JSON.parse(result.stdout)
   assert.ok(report.findings.some(item => item.code === 'MIG_SEMANTIC_API_CHANGE'))
   assert.equal(result.stderr, '')
 
-  result = spawnSync(process.execPath, [cli, 'migrate', 'apply', root, '--safe', '--json'], { encoding: 'utf8' })
+  result = spawnSync(process.execPath, [cli, 'migrate', 'apply', root, '--safe', '--plan-file', planFile, '--json'], { encoding: 'utf8' })
   assert.equal(result.status, 1)
   assert.equal(JSON.parse(result.stdout).mode, 'preview')
   assert.equal(readFileSync(join(root, 'src', 'client.ts'), 'utf8').includes("from '@deepseek-ai/dsh-api-session-controller/client'"), false)
 
+  writeFileSync(join(root, 'src', 'client.ts'), `${readFileSync(join(root, 'src', 'client.ts'), 'utf8')}// changed after preview\n`)
+  result = spawnSync(process.execPath, [cli, 'migrate', 'apply', root, '--safe', '--yes', '--plan-file', planFile, '--json'], { encoding: 'utf8' })
+  assert.equal(result.status, 2)
+  assert.match(JSON.parse(result.stdout).operationalError, /analysis changed after the preview/)
+
   result = spawnSync(process.execPath, [cli, 'migrate', 'apply', '--safe', '--json'], { encoding: 'utf8' })
   assert.equal(result.status, 2)
   assert.match(JSON.parse(result.stdout).operationalError, /explicit plugin root/)
+
+  const exactRoot = fixture()
+  const exactPlanFile = migrationPlanFile()
+  result = spawnSync(process.execPath, [cli, 'migrate', 'apply', exactRoot, '--safe', '--plan-file', exactPlanFile, '--json'], { encoding: 'utf8' })
+  const exactPreview = JSON.parse(result.stdout)
+  assert.equal(result.status, 1)
+  result = spawnSync(process.execPath, [cli, 'migrate', 'apply', exactRoot, '--safe', '--yes', '--plan-file', exactPlanFile, '--json'], { encoding: 'utf8' })
+  const exactApplied = JSON.parse(result.stdout)
+  assert.equal(result.status, 0)
+  assert.equal(exactApplied.plan.id, exactPreview.plan.id)
+  assert.match(readFileSync(join(exactRoot, 'src', 'client.ts'), 'utf8'), /from '@deepseek-ai\/cordis'/)
 })

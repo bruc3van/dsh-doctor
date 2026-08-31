@@ -45,7 +45,9 @@ Options:
   --from <ref>            source DSH ref (default: dsh-v0.1.1-rc.2)
   --to <ref>              target DSH ref (default: dsh-v0.1.2-alpha.2)
   --safe                  restrict migrate apply to catalog-confirmed exact rewrites
+  --plan-file <path>      persist or consume the reviewed migrate apply plan
   --level <level>         static, build, or runtime verification
+  --install               synchronize dependencies before build/runtime verification
   --keep-temp             retain a successful runtime verification directory
   -h, --help             show help
   -v, --version          show version
@@ -85,7 +87,9 @@ const HELP_ZH = `用法：
   --from <ref>           源 DSH ref（默认：dsh-v0.1.1-rc.2）
   --to <ref>             目标 DSH ref（默认：dsh-v0.1.2-alpha.2）
   --safe                 migrate apply 仅执行 catalog 确认的精确改写
+  --plan-file <路径>     保存或读取已审阅的 migrate apply 计划
   --level <级别>        static、build 或 runtime
+  --install              在 build/runtime 验证前同步依赖
   --keep-temp            成功后仍保留运行时验证目录
   -h, --help             显示帮助
   -v, --version          显示版本
@@ -143,8 +147,11 @@ function parse(args) {
     else if (arg === '--to') options.to = valueAfter(args, index++, arg)
     else if (arg.startsWith('--to=')) options.to = optionValue(arg, '--to')
     else if (arg === '--safe') options.safe = true
+    else if (arg === '--plan-file') options.planFile = valueAfter(args, index++, arg)
+    else if (arg.startsWith('--plan-file=')) options.planFile = optionValue(arg, '--plan-file')
     else if (arg === '--level') options.level = valueAfter(args, index++, arg)
     else if (arg.startsWith('--level=')) options.level = optionValue(arg, '--level')
+    else if (arg === '--install') options.install = true
     else if (arg === '--keep-temp') options.keepTemp = true
     else if (arg === '--help' || arg === '-h') options.help = true
     else if (arg === '--version' || arg === '-v') options.version = true
@@ -293,7 +300,7 @@ async function main() {
     if (!['analyze', 'apply', 'verify'].includes(options.migrateAction)) throw new Error('migrate needs analyze, apply, or verify')
     if (options.migrateAction === 'apply' && options.safe !== true) throw new Error('migrate apply requires --safe')
     if (options.migrateAction === 'apply' && options.pluginRoot === undefined) throw new Error('migrate apply requires an explicit plugin root')
-    const migrationOptions = { from: options.from, to: options.to, harnessRoot: options.harnessRoot, dshCommand: options.dshCommand, level: options.level, yes: options.yes, safe: options.safe, keepTemp: options.keepTemp }
+    const migrationOptions = { from: options.from, to: options.to, harnessRoot: options.harnessRoot, dshCommand: options.dshCommand, level: options.level, yes: options.yes, safe: options.safe, keepTemp: options.keepTemp, planFile: options.planFile, install: options.install }
     if (options.migrateAction === 'verify') {
       const { formatVerification, verifyMigration } = await import('./migrate-verify.mjs')
       const result = verifyMigration(options.pluginRoot, migrationOptions)

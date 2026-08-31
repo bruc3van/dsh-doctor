@@ -2,6 +2,28 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.5.5
+
+### 主要更新
+
+- `migrate apply` 新增持久化 `--plan-file`：预览以独占方式新建插件目录外的 plan，不覆盖已有文件，并通过分块 SHA-256 绑定包括大文件在内的完整分析输入与每项修改；正式写入必须消费同一个 plan，任何输入漂移都会拒绝写入。
+- migration catalog 新增目标依赖分类策略，区分 Client 关系的 peer/dev 放置；不再把新 owner 机械复制到旧包所在的 dependency section。
+- build/runtime 验证新增显式 `--install` 门：使用检测到的包管理器禁用 lifecycle scripts 后同步 lockfile 和 `node_modules`，按 runtime、development、peer 与 optional 声明核验实际解析的 DSH/Cordis 版本，再执行项目脚本。
+- Skill 新增实际 DSH 与源码调查流程，覆盖 PATH、全局安装、`DSH_HOME`、插件 lockfile、Harness checkout、未收录版本 delta，以及 semantic finding 的调用方、Service、snapshot 和生命周期证据。
+- migration manifest 检查补齐 `dsh.client.platform` 与 `dsh.client.immediately` 类型校验，并将顶层 `out` 纳入构建产物漂移扫描。
+- 移除仅包含静态场景清单、未执行真实 Agent 运行的 Skill eval，避免把字符串契约检查误报为 Agent 场景评测。
+
+### 安装
+
+```sh
+npm install --global @bruc3van/dsh-doctor@0.5.5
+npx skills add bruc3van/dsh-doctor
+```
+
+### 验证
+
+- 新增跨进程 plan 漂移、已有 plan 防覆盖、大文件输入哈希、plan 篡改、依赖分类、peer/optional peer 解析、依赖同步、静态预检短路和源码调查契约回归测试。
+
 ## v0.5.4
 
 ### 主要更新

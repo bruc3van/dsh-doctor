@@ -1,14 +1,14 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { basename, join, relative, resolve } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import semver from 'semver'
 import ts from 'typescript'
 import { parseDocument } from 'yaml'
-import { atomicWrite, sha256 } from './safe-write.mjs'
+import { atomicWrite, sha256, sha256File, writeNewFile } from './safe-write.mjs'
 import { loadMigration, verifyHarnessCheckout } from './migration-catalog.mjs'
 
 const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.mts', '.cts'])
 const SOURCE_DIRS_TO_SKIP = new Set(['.git', 'node_modules', 'coverage'])
-const ARTIFACT_DIRS = ['lib', 'dist', 'build']
+const ARTIFACT_DIRS = ['lib', 'dist', 'build', 'out']
 const DEPENDENCY_FIELDS = ['dependencies', 'peerDependencies', 'devDependencies', 'optionalDependencies']
 const LOCKFILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'])
 const NON_RUNTIME_TEXT_EXTENSIONS = new Set(['.md', '.mdx', '.txt', '.snap'])
@@ -132,13 +132,25 @@ function analyzeFile(file, pluginRoot, catalog, origin) {
             remaining.push(spec)
             const semantic = rule?.confidence === 'semantic'
             findings.push({ code: semantic ? 'MIG_SEMANTIC_API_CHANGE' : 'MIG_REMOVED_PACKAGE_REFERENCE', severity: 'error', message: semantic ? `${spec.imported} requires a semantic migration: ${rule.reason}` : `${moduleName} was removed without a safe automatic replacement`, location: where, evidence: { module: moduleName, ...(spec.imported ? { symbol: spec.imported } : {}) }, autoFix: 'none' })
-            unresolved.push({ file: where.file, package: rootName, symbol: spec.imported, reason: rule?.reason ?? 'No exact replacement is known.' })
+            unresolved.push({
+              file: where.file,
+              package: rootName,
+              symbol: spec.imported,
+              ...(rule?.toModule ? { targetModule: rule.toModule } : {}),
+              ...(rule?.toSymbol ? { targetSymbol: rule.toSymbol } : {}),
+              reason: rule?.reason ?? 'No exact replacement is known.',
+            })
           }
         }
         const declarationText = ts.isImportDeclaration(node) ? text.slice(node.getStart(source), node.getEnd()) : ''
         const simpleNamedImport = exact.length > 0 && ts.isImportDeclaration(node) && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings) && node.importClause.name === undefined && node.attributes === undefined && node.assertClause === undefined && !/\/(?:\/|\*)/.test(declarationText)
         if (simpleNamedImport) {
-          for (const item of exact) exactTargets.set(`${rootName}\0${item.toModule}`, { fromPackage: rootName, toPackage: packageRoot(item.toModule) })
+          for (const item of exact) exactTargets.set(`${rootName}\0${item.toModule}`, {
+            fromPackage: rootName,
+            toPackage: packageRoot(item.toModule),
+            relationship: 'client',
+            typeOnly: item.typeOnly,
+          })
           const groups = new Map()
           for (const item of exact) {
             const list = groups.get(item.toModule) ?? []
@@ -203,6 +215,12 @@ function manifestFindings(manifest, catalog) {
     }
   }
   const client = manifest.value.dsh?.client
+  if (client !== undefined && (client === null || Array.isArray(client) || typeof client !== 'object')) {
+    findings.push({ code: 'MIG_INVALID_MANIFEST', severity: 'error', message: 'dsh.client must be an object', location: { file: 'package.json' }, evidence: { field: 'dsh.client' }, autoFix: 'none' })
+    return findings
+  }
+  if (client !== undefined && typeof client.platform !== 'string') findings.push({ code: 'MIG_INVALID_MANIFEST', severity: 'error', message: 'dsh.client.platform must be a string', location: { file: 'package.json' }, evidence: { field: 'dsh.client.platform' }, autoFix: 'none' })
+  if (client?.immediately !== undefined && typeof client.immediately !== 'boolean') findings.push({ code: 'MIG_INVALID_MANIFEST', severity: 'error', message: 'dsh.client.immediately must be a boolean', location: { file: 'package.json' }, evidence: { field: 'dsh.client.immediately' }, autoFix: 'none' })
   for (const field of ['inject', 'external']) {
     const values = client?.[field]
     if (values !== undefined && !Array.isArray(values)) {
@@ -302,16 +320,22 @@ function planManifest(manifest, sourceResults, artifactResults, opaqueReferences
     for (const removedPackage of presentRemoved) {
       const stillUsed = sourceReferences.has(removedPackage) || clientGraph.includes(removedPackage) || opaqueReferences.has(removedPackage) || (sourceResults.length === 0 && artifactText.includes(removedPackage))
       if (!stillUsed) delete deps[removedPackage]
-      for (const move of exactTargets.filter(item => item.fromPackage === removedPackage)) {
-        const version = targetVersion(move.toPackage, catalog)
-        if (version !== undefined && deps[move.toPackage] === undefined) deps[move.toPackage] = version
-      }
     }
     if (field === 'devDependencies') {
       for (const [name, range] of Object.entries(deps)) {
         const target = targetVersion(name, catalog)
         if (target !== undefined && !catalog.packages.removed.includes(name) && (semver.validRange(range) === null || !semver.satisfies(target, range))) deps[name] = target
       }
+    }
+  }
+  for (const move of new Map(exactTargets.map(item => [`${item.relationship}\0${item.toPackage}`, item])).values()) {
+    const fields = catalog.packages.dependencyPolicies?.[move.toPackage]?.[move.relationship]
+    const version = targetVersion(move.toPackage, catalog)
+    if (!Array.isArray(fields) || version === undefined) continue
+    for (const field of fields) {
+      if (!DEPENDENCY_FIELDS.includes(field)) throw new Error(`migration catalog has an invalid dependency field ${field}`)
+      const deps = next[field] ??= {}
+      if (deps[move.toPackage] === undefined) deps[move.toPackage] = version
     }
   }
   const changes = []
@@ -334,6 +358,12 @@ function summarize(findings, safeEdits, unresolved) {
     safeEdits: safeEdits.length,
     semanticTasks: unresolved.length,
   }
+}
+
+function analysisInputs(root) {
+  return walkAll(root, SOURCE_DIRS_TO_SKIP)
+    .map(file => ({ file: relativePath(root, file), hash: sha256File(file) }))
+    .sort((left, right) => left.file.localeCompare(right.file))
 }
 
 export function analyzeMigration(pluginRoot = process.cwd(), options = {}) {
@@ -363,28 +393,84 @@ export function analyzeMigration(pluginRoot = process.cwd(), options = {}) {
   return {
     schemaVersion: 1,
     command: 'migrate analyze',
-    migration: { id: catalog.manifest.id, from: catalog.manifest.from, to: catalog.manifest.to, harness },
+    migration: { id: catalog.manifest.id, from: catalog.manifest.from, to: catalog.manifest.to, references: catalog.manifest.references ?? {}, harness },
     plugin: { root, name: manifest.value.name ?? basename(root), version: manifest.value.version ?? 'unknown', manifestFile: manifest.file, packageManager: existsSync(join(root, 'pnpm-lock.yaml')) ? 'pnpm' : existsSync(join(root, 'yarn.lock')) ? 'yarn' : 'npm' },
     summary: summarize(findings, safeEdits, unresolved),
     findings,
     safeEdits,
     semanticTasks: unresolved,
+    sourceInvestigation: {
+      required: harness.exact !== true || unresolved.length > 0,
+      targetRef: catalog.manifest.to.ref,
+      catalogReferences: catalog.manifest.references ?? {},
+      semanticTargets: [...new Set(unresolved.map(item => item.targetModule).filter(Boolean))],
+    },
     verification: { status: 'analyzed', level: 'static-analysis', passed: findings.every(item => item.severity !== 'error') },
+    _inputs: analysisInputs(root),
     _plan: changed.map(item => ({ file: item.file, snapshot: { file: item.file, exists: true, hash: sha256(item.text) }, nextText: item.nextText })),
   }
 }
 
 export function publicMigrationReport(report) {
-  const { _plan, ...value } = report
+  const { _inputs, _plan, ...value } = report
   const harness = { ...value.migration.harness }
   delete harness.fromEntryIds
   delete harness.toEntryIds
   return { ...value, migration: { ...value.migration, harness } }
 }
 
+export function createMigrationPlan(report) {
+  const publicReport = publicMigrationReport(report)
+  const payload = {
+    schemaVersion: 1,
+    command: 'migrate apply plan',
+    plugin: { root: report.plugin.root, manifestFile: report.plugin.manifestFile },
+    migration: {
+      id: report.migration.id,
+      from: report.migration.from.ref,
+      to: report.migration.to.ref,
+      harness: {
+        status: report.migration.harness.status,
+        fromCommit: report.migration.harness.fromCommit,
+        toCommit: report.migration.harness.toCommit,
+      },
+    },
+    reportHash: sha256(JSON.stringify(publicReport)),
+    inputs: report._inputs,
+    edits: report.safeEdits,
+  }
+  return { ...payload, planId: sha256(JSON.stringify(payload)) }
+}
+
+function readMigrationPlan(file) {
+  const value = JSON.parse(readFileSync(resolve(file), 'utf8'))
+  if (value?.schemaVersion !== 1 || value.command !== 'migrate apply plan' || typeof value.planId !== 'string') throw new Error('invalid migration plan file')
+  const { planId, ...payload } = value
+  if (sha256(JSON.stringify(payload)) !== planId) throw new Error('migration plan file digest does not match its contents')
+  return value
+}
+
+function assertMigrationPlan(report, plan) {
+  const current = createMigrationPlan(report)
+  if (plan.plugin.root !== current.plugin.root || plan.plugin.manifestFile !== current.plugin.manifestFile) throw new Error('migration plan targets a different plugin')
+  if (plan.migration.id !== current.migration.id || plan.migration.from !== current.migration.from || plan.migration.to !== current.migration.to) throw new Error('migration plan targets a different catalog')
+  if (plan.reportHash !== current.reportHash || JSON.stringify(plan.inputs) !== JSON.stringify(current.inputs) || JSON.stringify(plan.edits) !== JSON.stringify(current.edits)) throw new Error('plugin analysis changed after the preview; create and review a new migration plan')
+  return current
+}
+
 export function applyMigration(report, options = {}) {
   if (options.safe !== true) throw new Error('migrate apply requires --safe')
-  if (options.yes !== true) return { mode: 'preview', ...publicMigrationReport(report) }
+  if (options.planFile === undefined) throw new Error('migrate apply requires --plan-file so the confirmed preview can be verified')
+  const planFile = resolve(options.planFile)
+  const planRelative = relative(report.plugin.root, planFile)
+  if (planRelative === '' || (planRelative !== '..' && !planRelative.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(planRelative))) throw new Error('migration plan file must be outside the plugin root')
+  if (options.yes !== true) {
+    const plan = createMigrationPlan(report)
+    writeNewFile(planFile, `${JSON.stringify(plan, null, 2)}\n`)
+    return { mode: 'preview', plan: { file: planFile, id: plan.planId }, ...publicMigrationReport(report) }
+  }
+  const plan = readMigrationPlan(planFile)
+  const verifiedPlan = assertMigrationPlan(report, plan)
   // Exact edits remain safe when semantic work remains; unresolved references keep the removed dependency.
   for (const item of report._plan) {
     const currentExists = existsSync(item.snapshot.file)
@@ -393,7 +479,7 @@ export function applyMigration(report, options = {}) {
   }
   const writes = report._plan.map(item => ({ ...atomicWrite(item.snapshot, item.nextText), beforeHash: item.snapshot.hash, afterHash: sha256(item.nextText) }))
   const verification = analyzeMigration(report.plugin.root, { from: report.migration.from.ref, to: report.migration.to.ref, harnessRoot: report.migration.harness.root })
-  return { mode: 'applied', writes, report: publicMigrationReport(verification) }
+  return { mode: 'applied', plan: { file: planFile, id: verifiedPlan.planId }, writes, report: publicMigrationReport(verification) }
 }
 
 export function formatMigrationReport(report, language = 'en') {

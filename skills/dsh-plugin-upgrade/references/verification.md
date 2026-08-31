@@ -6,7 +6,9 @@ Static analysis covers source/type imports, dependency ranges, client graph decl
 
 ## Build
 
-The CLI selects the package manager from lockfiles and runs declared scripts in this order: `typecheck`, `build`, `test`, `pack:check`, stopping at the first failure. Artifact verification requires a successful `build` or `pack:check`; `typecheck`/`test` alone do not pass this gate.
+Build and runtime verification require `--yes --install`. The CLI selects the package manager from lockfiles, synchronizes dependencies with dependency lifecycle scripts disabled, records the lockfile hash before and after, and verifies installed DSH/Cordis versions against `dependencies`, `devDependencies`, `peerDependencies`, and `optionalDependencies`. Required peers must resolve and satisfy every declared range. Missing optional dependencies or peers are recorded as `optional-missing`; when installed, they must satisfy their ranges. It then runs declared scripts in this order: `typecheck`, `build`, `test`, `pack:check`, stopping at the first failure. Artifact verification requires a successful `build` or `pack:check`; `typecheck`/`test` alone do not pass this gate.
+
+If dependency installation or resolution verification fails, stop before running project scripts. Review and retain package manifest and lockfile changes with the source migration.
 
 ## Runtime
 

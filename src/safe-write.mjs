@@ -1,9 +1,36 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export function sha256(text) {
   return createHash('sha256').update(text).digest('hex')
+}
+
+export function sha256File(file) {
+  const hash = createHash('sha256')
+  const descriptor = openSync(file, 'r')
+  const buffer = Buffer.allocUnsafe(64 * 1024)
+  try {
+    let bytesRead
+    do {
+      bytesRead = readSync(descriptor, buffer, 0, buffer.length, null)
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead))
+    } while (bytesRead > 0)
+  } finally {
+    closeSync(descriptor)
+  }
+  return hash.digest('hex')
+}
+
+export function writeNewFile(file, text) {
+  mkdirSync(dirname(file), { recursive: true })
+  try {
+    writeFileSync(file, text, { flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    if (error?.code === 'EEXIST') throw new Error(`${file} already exists; choose a new migration plan path`)
+    throw error
+  }
+  return { file }
 }
 
 export function snapshotFile(file) {

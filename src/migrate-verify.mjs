@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import crossSpawn from 'cross-spawn'
+import semver from 'semver'
 import { analyzeMigration, publicMigrationReport } from './migrate.mjs'
 import { sha256 } from './safe-write.mjs'
 
@@ -38,9 +39,55 @@ function commandEvidence(result) {
 }
 
 function packageManager(root) {
-  if (existsSync(join(root, 'pnpm-lock.yaml'))) return { command: 'pnpm', run: script => ['run', script], pack: destination => ['pack', '--pack-destination', destination] }
-  if (existsSync(join(root, 'yarn.lock'))) return { command: 'yarn', run: script => [script], pack: destination => ['pack', '--out', join(destination, 'plugin.tgz')] }
-  return { command: 'npm', run: script => ['run', script], pack: destination => ['pack', '--json', '--pack-destination', destination] }
+  if (existsSync(join(root, 'pnpm-lock.yaml'))) return { command: 'pnpm', install: ['install', '--no-frozen-lockfile', '--ignore-scripts'], lockfile: 'pnpm-lock.yaml', run: script => ['run', script], pack: destination => ['pack', '--pack-destination', destination] }
+  if (existsSync(join(root, 'yarn.lock'))) return { command: 'yarn', install: ['install', '--ignore-scripts'], lockfile: 'yarn.lock', run: script => [script], pack: destination => ['pack', '--out', join(destination, 'plugin.tgz')] }
+  return { command: 'npm', install: ['install', '--ignore-scripts'], lockfile: 'package-lock.json', run: script => ['run', script], pack: destination => ['pack', '--json', '--pack-destination', destination] }
+}
+
+function lockfileHash(root, manager) {
+  const file = join(root, manager.lockfile)
+  return existsSync(file) ? sha256(readFileSync(file)) : undefined
+}
+
+function installedManifestFile(root, name) {
+  let current = resolve(root)
+  while (true) {
+    const file = join(current, 'node_modules', ...name.split('/'), 'package.json')
+    if (existsSync(file)) return file
+    const parent = dirname(current)
+    if (parent === current) return undefined
+    current = parent
+  }
+}
+
+export function installedDependencyEvidence(root, manifest) {
+  const requested = new Map()
+  for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    for (const [name, range] of Object.entries(manifest[field] ?? {})) {
+      if (name !== '@deepseek-ai/cordis' && !name.startsWith('@deepseek-ai/dsh-')) continue
+      const optional = field === 'optionalDependencies' || (field === 'peerDependencies' && manifest.peerDependenciesMeta?.[name]?.optional === true)
+      const declarations = requested.get(name) ?? []
+      declarations.push({ field, range, optional })
+      requested.set(name, declarations)
+    }
+  }
+  return [...requested].map(([name, declarations]) => {
+    const file = installedManifestFile(root, name)
+    if (file === undefined) {
+      const optional = declarations.every(item => item.optional)
+      return { name, declarations, installed: false, optional, passed: optional, ...(optional ? { status: 'optional-missing' } : { error: 'declared dependency is not installed' }) }
+    }
+    try {
+      const installed = JSON.parse(readFileSync(file, 'utf8'))
+      const checks = declarations.map(item => {
+        const validRange = typeof item.range === 'string' ? semver.validRange(item.range) : null
+        return { ...item, passed: validRange !== null && semver.satisfies(installed.version, validRange) }
+      })
+      return { name, declarations: checks, installed: true, manifestFile: file, installedVersion: installed.version, passed: installed.name === name && checks.every(item => item.passed) }
+    } catch (error) {
+      return { name, declarations, installed: true, manifestFile: file, passed: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
 }
 
 function discoverDsh(options) {
@@ -98,6 +145,7 @@ export function verifyMigration(pluginRoot = process.cwd(), options = {}) {
   const level = options.level ?? 'static'
   if (!['static', 'build', 'runtime'].includes(level)) throw new Error(`unsupported verification level ${level}`)
   if (level !== 'static' && options.yes !== true) throw new Error(`migrate verify --level ${level} executes project commands and requires --yes`)
+  if (level !== 'static' && options.install !== true) throw new Error(`migrate verify --level ${level} requires --install to synchronize and verify target dependencies`)
   const analysis = analyzeMigration(pluginRoot, options)
   const result = {
     schemaVersion: 1,
@@ -111,10 +159,29 @@ export function verifyMigration(pluginRoot = process.cwd(), options = {}) {
     manualBehaviorVerificationRequired: true,
   }
   if (level === 'static') return result
+  if (!result.passed) return result
 
   const root = analysis.plugin.root
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   const manager = packageManager(root)
+  const lockfileBefore = lockfileHash(root, manager)
+  const installRun = commandResult(manager.command, manager.install, { cwd: root })
+  const dependencies = installedDependencyEvidence(root, manifest)
+  const dependenciesPassed = installRun.passed && dependencies.every(item => item.passed)
+  result.stages.push({
+    name: 'dependencies',
+    passed: dependenciesPassed,
+    packageManager: manager.command,
+    command: commandEvidence(installRun),
+    lockfile: {
+      file: manager.lockfile,
+      beforeHash: lockfileBefore,
+      afterHash: lockfileHash(root, manager),
+    },
+    resolved: dependencies,
+  })
+  result.passed = dependenciesPassed
+  if (!result.passed) return result
   const scripts = ['typecheck', 'build', 'test', 'pack:check'].filter(name => typeof manifest.scripts?.[name] === 'string')
   const commandRuns = []
   for (const script of scripts) {

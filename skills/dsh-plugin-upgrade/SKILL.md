@@ -26,7 +26,7 @@ Use these catalog reference points in the current CLI commands:
 - source: `dsh-v0.1.1-rc.2`
 - target: `dsh-v0.1.2-alpha.2`
 
-Read [cli-bootstrap.md](references/cli-bootstrap.md) before running any migration command, [compatibility-strategy.md](references/compatibility-strategy.md) before proposing or writing changes, [migration-map.md](references/migration-map.md) before making semantic changes, and [verification.md](references/verification.md) before build or runtime verification.
+Read [cli-bootstrap.md](references/cli-bootstrap.md) before running any migration command, [compatibility-strategy.md](references/compatibility-strategy.md) before proposing or writing changes, [source-investigation.md](references/source-investigation.md) before investigating an unlisted version or semantic task, [migration-map.md](references/migration-map.md) before making semantic changes, and [verification.md](references/verification.md) before dependency, build, or runtime verification.
 
 Before touching the plugin, inspect the local CLI and perform the read-only registry update check described in `cli-bootstrap.md`. Select one exact DSH Doctor version, verify it exposes this migration catalog, and keep the same invocation for analyze, apply, and verify. Prefer an exact-version `npx` fallback over changing the developer's global installation. Never globally install or update the CLI without explicit authorization.
 
@@ -59,6 +59,8 @@ dsh-doctor migrate analyze <plugin-root> \
 
 Append `--harness-root <deepseek-harness-root>` when the checkout is available. Prefer an exact Harness checkout so the CLI verifies both tag commits. Both tags must exist and resolve to the commits recorded by the catalog; fetch the repository tags first when a shallow checkout lacks them. Without `--harness-root`, analysis is catalog-only and must be reported as such.
 
+Follow `source-investigation.md` to record the actual PATH or explicit DSH command, installed package, profile, plugin manifest and resolved dependency versions. When the actual source or target differs from the catalog refs, inspect that additional ref interval separately with read-only Git commands. For each semantic finding, use its target module and the catalog reference paths to inspect the exact exported API and plugin callers; do not stop at naming a likely new owner.
+
 Group the result by:
 
 1. errors blocking compatibility;
@@ -76,16 +78,20 @@ Enter this phase only after the compatibility decision gate is resolved. The com
 Preview first:
 
 ```sh
-dsh-doctor migrate apply <plugin-root> --safe --harness-root <deepseek-harness-root> --json
+dsh-doctor migrate apply <plugin-root> --safe \
+  --plan-file <reviewed-plan-outside-plugin-root.json> \
+  --harness-root <deepseek-harness-root> --json
 ```
 
-Review affected files and hashes. Apply only with explicit authorization:
+Store the plan outside the plugin root so it is not treated as plugin input. Review the plan id, complete analysis, affected files, and before/after hashes. Apply that exact plan only with explicit authorization:
 
 ```sh
-dsh-doctor migrate apply <plugin-root> --safe --yes --harness-root <deepseek-harness-root> --json
+dsh-doctor migrate apply <plugin-root> --safe --yes \
+  --plan-file <same-reviewed-plan.json> \
+  --harness-root <deepseek-harness-root> --json
 ```
 
-The CLI creates timestamped backups and refuses writes when a file changed after preview. It may split a mixed import: exact symbols move to their new owners while semantic symbols remain unresolved. It may pin non-removed DSH development dependencies and add dependencies required by exact symbol moves. It does not change the ranges of existing published peers automatically. Never mechanically replace the removed Client Runtime with one aggregate package; no such replacement exists.
+The CLI binds the apply to the persisted report and edit hashes, creates timestamped backups, and refuses writes when the plugin analysis changed after preview. It may split a mixed import: exact symbols move to their new owners while semantic symbols remain unresolved. Dependency additions follow catalog-owned Client/Host and peer/dev policies instead of copying the removed package's old dependency section. It may pin non-removed DSH development dependencies. It does not widen the ranges of existing published peers automatically. Never mechanically replace the removed Client Runtime with one aggregate package; no such replacement exists.
 
 After apply, inspect every `MIG_SEMANTIC_API_CHANGE`. Rewrite behavior using the new domain owner and its current snapshot/lifecycle contract. Keep these edits separate enough to review and test.
 
@@ -95,11 +101,11 @@ Run the gates in order:
 
 ```sh
 dsh-doctor migrate verify <plugin-root> --level static --harness-root <deepseek-harness-root> --json
-dsh-doctor migrate verify <plugin-root> --level build --yes --harness-root <deepseek-harness-root> --json
-dsh-doctor migrate verify <plugin-root> --level runtime --yes --harness-root <deepseek-harness-root> --json
+dsh-doctor migrate verify <plugin-root> --level build --yes --install --harness-root <deepseek-harness-root> --json
+dsh-doctor migrate verify <plugin-root> --level runtime --yes --install --harness-root <deepseek-harness-root> --json
 ```
 
-Build and runtime levels execute plugin scripts and therefore require `--yes`. Runtime verification packs the real plugin, creates a temporary `DSH_HOME`, installs into a new web profile, dumps effective config, and performs an activation smoke. It does not modify the developer's normal `~/.dsh`.
+Build and runtime levels require `--yes --install`: the CLI first runs the detected package manager with lifecycle scripts disabled, updates the lockfile when needed, and verifies the installed DSH/Cordis versions against runtime, development, peer, and optional dependency declarations before executing project scripts. A required peer must resolve and satisfy every declared range; a missing optional peer is recorded but does not fail the gate. Review lockfile changes as migration changes. Runtime verification then packs the real plugin, creates a temporary `DSH_HOME`, installs into a new web profile, dumps effective config, and performs an activation smoke. It does not modify the developer's normal `~/.dsh`.
 
 Resolve every semantic task and rebuild stale artifacts before expecting static verification to pass. An `apply` exit code of 1 after successful writes means migration blockers remain in the follow-up analysis; inspect `mode`, `writes`, and `report` instead of treating it as a write failure.
 
@@ -126,4 +132,5 @@ State the highest achieved gate exactly:
 Do not call the plugin compatible while errors, semantic tasks, stale artifacts, or required behavior checks remain. Include backups and retained temporary directories in the handoff.
 Also report the selected DSH Doctor version and source (`local`, exact-version `npx`, or explicitly authorized global install), the registry version observed at bootstrap, and whether update status was current, outdated, missing, or unknown.
 Report the plugin's actual source/target version evidence separately from the catalog reference refs. State whether the plugin is ready for its normal release process; if a release was explicitly requested and completed, include the commit, tag, registry, and release verification evidence.
+Report the migration plan file and plan id, dependency-install command, lockfile change, and resolved target dependency versions. For semantic or unlisted-version work, include the DSH executable/package evidence, checkout refs and commits, inspected source paths, and remaining unknowns described in `source-investigation.md`.
 State the compatibility intent as one of `0.1.2-only`, `dual-version`, or `pending developer decision`. For `dual-version`, report build, artifact, runtime, and behavior evidence separately for 0.1.1 and 0.1.2; only call the release dual-compatible when every required row passes.
