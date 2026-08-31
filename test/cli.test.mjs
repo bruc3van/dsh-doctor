@@ -138,7 +138,7 @@ test('CLI applies a confirmed repair, creates a backup, and re-diagnoses', () =>
   }, null, 2)}\n`)
   writeFileSync(join(plugin, 'cordis.patch.yml'), '[]\n')
 
-  const result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--yes', '--json'], { encoding: 'utf8' })
+  const result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--yes', '--lang=en', '--json'], { encoding: 'utf8' })
   assert.equal(result.status, 0)
   const report = JSON.parse(result.stdout)
   assert.equal(report.ok, true)
@@ -156,11 +156,11 @@ test('CLI refuses an unconfirmed repair in a non-interactive process', () => {
   mkdirSync(profile, { recursive: true })
   writeFileSync(join(profile, 'package.json'), `${JSON.stringify({ dependencies: { missing: '1.0.0' } })}\n`)
   const isolatedEnv = { ...process.env, PATH: '', Path: '' }
-  let result = spawnSync(process.execPath, [cli, '--home', home, '--fix'], { encoding: 'utf8', env: isolatedEnv })
+  let result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--lang=en'], { encoding: 'utf8', env: isolatedEnv })
   assert.equal(result.status, 2)
   assert.match(result.stderr, /no working DSH CLI/)
 
-  result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--dsh-command', process.execPath], { encoding: 'utf8', env: isolatedEnv })
+  result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--lang=en', '--dsh-command', process.execPath], { encoding: 'utf8', env: isolatedEnv })
   assert.equal(result.status, 2)
   assert.match(result.stderr, /interactive terminal or explicit --yes/)
 })

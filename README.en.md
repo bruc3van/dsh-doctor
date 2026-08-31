@@ -29,14 +29,17 @@ Upgrade this plugin from DSH 0.1.1 to DSH 0.1.2.
 Analyze compatibility first, modify the code, then complete build and runtime verification.
 ```
 
+An upgrade request does not itself authorize dropping the old runtime. If the developer has not said, the skill explicitly asks whether the same upgraded plugin release must still support DSH 0.1.1 before any migration write, dependency installation, build, or runtime command. When compatibility must be preserved, the agent designs a dual-version approach first and verifies 0.1.1 and 0.1.2 separately; one successful 0.1.2 run is not dual-version evidence.
+
 The skill reminds the agent to work in this order:
 
 1. inspect the plugin root, Harness checkout, package manager, and available DSH Doctor;
 2. analyze source, type imports, dependencies, manifest, client graph, patches, and build output;
-3. preview and apply code changes that are known to be equivalent;
-4. use the new API owners to handle semantic changes that require understanding the plugin;
-5. rebuild the plugin and run static, build, and isolated runtime verification;
-6. report the changed files, remaining work, backups, and the verification level actually reached.
+3. confirm whether the upgraded release targets only 0.1.2 or must remain compatible with 0.1.1;
+4. preview and apply code changes that are known to be equivalent under the selected compatibility strategy;
+5. use the new API owners to handle semantic changes that require understanding the plugin;
+6. rebuild the plugin and run static, build, and isolated runtime verification, covering both versions in dual-version mode;
+7. report the compatibility intent, changed files, remaining work, backups, and the verification level actually reached.
 
 `npx skills add` installs agent instructions only. It does not install DSH Doctor globally. The skill checks the local CLI and npm registry first. If the local version is unsuitable, it uses a pinned `npx` version by default and does not change the global npm installation.
 
@@ -112,7 +115,7 @@ Node.js `^22.19.0` or `>=24.0.0` is required.
 First confirm that the CLI contains the required migration:
 
 ```sh
-npx --yes --package=@bruc3van/dsh-doctor@0.5.3 \
+npx --yes --package=@bruc3van/dsh-doctor@0.5.4 \
   dsh-doctor migrations list
 ```
 

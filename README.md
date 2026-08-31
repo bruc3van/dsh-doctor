@@ -29,14 +29,17 @@ npx skills add bruc3van/dsh-doctor
 先分析兼容问题，再修改代码，最后完成构建和运行时验证。
 ```
 
+升级请求本身不代表可以放弃旧版。若开发者没有说明，Skill 会在任何迁移写入、依赖安装、构建或运行时命令前，显式询问升级后的同一插件版本是否还要兼容 DSH 0.1.1。选择保留兼容时，Agent 会先设计双版本适配方式，并分别验证 0.1.1 和 0.1.2；不能用一次 0.1.2 验证代替双版本结论。
+
 Skill 会提醒 Agent 按下面的顺序工作：
 
 1. 检查插件目录、Harness checkout、包管理器和可用的 DSH Doctor；
 2. 分析源码、类型导入、依赖、manifest、client graph、patch 和构建产物；
-3. 预览并应用可以确定等价的代码修改；
-4. 根据新的 API 所有者处理需要理解业务的语义迁移；
-5. 重新构建插件，并依次做静态、构建和隔离运行时验证；
-6. 报告修改内容、剩余问题、备份和实际达到的验证等级。
+3. 确认升级后是仅支持 0.1.2，还是同一版本继续兼容 0.1.1；
+4. 预览并应用可以确定等价、且符合所选兼容策略的代码修改；
+5. 根据新的 API 所有者处理需要理解业务的语义迁移；
+6. 重新构建插件，并依次做静态、构建和隔离运行时验证；双版本模式分别验证两端；
+7. 报告兼容目标、修改内容、剩余问题、备份和实际达到的验证等级。
 
 `npx skills add` 只安装 Agent 指令，不会安装全局 DSH Doctor。Skill 会先检查本地 CLI 和 npm registry；本地版本不合适时，默认使用固定版本的 `npx`，不会自行修改全局 npm 安装。
 
@@ -112,7 +115,7 @@ Migration catalog 保存 source/target tag 和 Git commit，并记录 package、
 先确认 CLI 包含需要的迁移：
 
 ```sh
-npx --yes --package=@bruc3van/dsh-doctor@0.5.3 \
+npx --yes --package=@bruc3van/dsh-doctor@0.5.4 \
   dsh-doctor migrations list
 ```
 
