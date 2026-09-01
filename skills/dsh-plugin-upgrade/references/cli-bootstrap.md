@@ -11,7 +11,7 @@ dsh-doctor --version
 dsh-doctor migrations list --json
 ```
 
-Record the local version and whether the exact current `dsh-v0.1.1-rc.2` to `dsh-v0.1.2-alpha.3` catalog is present. A command that exists but lacks this catalog is not usable for the current known target.
+Record the local version and whether it exposes the exact current catalog version pair declared in SKILL.md. A command that exists but lacks this catalog is not usable for the current known target.
 
 ## 2. Check the registry without changing the machine
 

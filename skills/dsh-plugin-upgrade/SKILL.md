@@ -1,13 +1,22 @@
 ---
 name: dsh-plugin-upgrade
-description: Help diagnose and upgrade a DeepSeek Harness plugin from DSH 0.1.1 to 0.1.2 with dsh-doctor, while deciding explicitly whether the upgraded release must remain compatible with DSH 0.1.1. Use when a plugin developer asks to assess compatibility, identify changed APIs, replace removed dsh-client-runtime or dsh-host-apiproxy usage, update DSH dependencies, modify plugin code, rebuild artifacts, or verify the plugin before releasing a new version. Apply only catalog-confirmed exact rewrites automatically, guide semantic code changes, and report what still needs developer verification. The current known target reference is dsh-v0.1.2-alpha.3.
+description: Help migrate a DeepSeek Harness (DSH) plugin from DSH 0.1.1 to 0.1.2 with the dsh-doctor CLI, deciding explicitly up front whether the upgraded release must stay compatible with DSH 0.1.1. Use when a plugin developer plans a migration or compatibility assessment: checking what changed between DSH versions, replacing imports of packages 0.1.2 removed (such as dsh-client-runtime or dsh-host-apiproxy), migrating settingsNamespace to the settings Service, updating DSH dependency ranges, or verifying and preparing a plugin release for 0.1.2. Applies only catalog-confirmed exact rewrites automatically and guides the semantic changes that need developer judgment. Not for debugging a plugin that already targets 0.1.2, general DSH usage or configuration questions, or developing the Harness itself.
 ---
 
 # Upgrade a DSH 0.1.1 plugin to 0.1.2
 
 Help the developer diagnose and modify one plugin at a time. Treat source migration, artifact verification, runtime activation, and business behavior as separate gates.
 
-The migration knowledge covers the DSH 0.1.1 to 0.1.2 transition. The current known catalog records `dsh-v0.1.1-rc.2` and `dsh-v0.1.2-alpha.3` as the exact reference points used to derive and verify known changes. Keep the skill's product scope at the release-line level (`0.1.1` to `0.1.2`), while keeping the catalog target exact. First record the plugin's actual DSH ranges and requested target. When a newer patch or prerelease appears, use the catalog for known changes only, inspect the additional interval, and report that it is not catalog-confirmed until the catalog and this skill are deliberately updated. Do not claim that the catalog proves an unlisted version combination.
+The migration knowledge covers the DSH 0.1.1 to 0.1.2 transition, derived and verified from one exact catalog version pair (declared below). Keep the skill's product scope at the release-line level (`0.1.1` to `0.1.2`), while keeping the catalog target exact. First record the plugin's actual DSH ranges and requested target. When a newer patch or prerelease appears, use the catalog for known changes only, inspect the additional interval, and report that it is not catalog-confirmed until the catalog and this skill are deliberately updated — a pass for the catalog pair never proves an unlisted version combination.
+
+## Current catalog version pair
+
+This block is the single source of truth for the exact refs. Every command below and every reference file defers to it; the references avoid repeating the literals on purpose. When the catalog advances, update this block, the `migrate analyze` example, and the shipped catalog together.
+
+- source ref: `dsh-v0.1.1-rc.2`
+- target ref: `dsh-v0.1.2-alpha.3`
+
+Standard commands target this pair and need no `--target-version`. If the developer explicitly targets a newer 0.1.2 build before the catalog is updated, inspect that additional interval first (see [source-investigation.md](references/source-investigation.md)), then pass its exact version to every migration phase as `--target-version <actual-0.1.2-version>`. That changes dependency pins and runtime expectations only; the catalog's API claims still end at the declared pair.
 
 ## Inputs
 
@@ -21,32 +30,24 @@ Determine:
 - whether the developer authorizes a global CLI install or update;
 - the plugin's package manager and build scripts.
 
-Use these catalog reference points in the current CLI commands:
-
-- source: `dsh-v0.1.1-rc.2`
-- target: `dsh-v0.1.2-alpha.3`
-
-The standard commands target the current known alpha.3 catalog and do not need `--target-version`. If the developer explicitly targets a newer 0.1.2 build before the catalog is updated, inspect the interval first, then pass its exact version to every migration phase as `--target-version <actual-0.1.2-version>`. This changes dependency pins and runtime expectations only; it does not extend the catalog's API claims.
-
 Read [cli-bootstrap.md](references/cli-bootstrap.md) before running any migration command, [compatibility-strategy.md](references/compatibility-strategy.md) before proposing or writing changes, [source-investigation.md](references/source-investigation.md) before investigating an unlisted version or semantic task, [migration-map.md](references/migration-map.md) before making semantic changes, and [verification.md](references/verification.md) before dependency, build, or runtime verification.
 
-Before touching the plugin, inspect the local CLI and perform the read-only registry update check described in `cli-bootstrap.md`. Select one exact DSH Doctor version, verify it exposes this migration catalog, and keep the same invocation for analyze, apply, and verify. Prefer the exact-version `npm exec` fallback over changing the developer's global installation. Never globally install or update the CLI without explicit authorization.
+Before touching the plugin, inspect the local CLI and perform the read-only registry update check described in `cli-bootstrap.md`. Select one exact DSH Doctor version, verify it exposes this migration catalog, and keep the same invocation for analyze, apply, and verify. Prefer the exact-version `npm exec` fallback over changing the developer's global installation; a global install or update always needs explicit authorization.
 
-The examples below use `dsh-doctor` for readability. When bootstrap selected a package-runner invocation, substitute the complete pinned prefix, `npm exec --yes --package=@bruc3van/dsh-doctor@<selected-version> -- dsh-doctor`, in every phase.
+The examples below use `dsh-doctor` for readability. When bootstrap selected a package-runner invocation, substitute the complete pinned prefix, `npm exec --yes --package=@bruc3van/dsh-doctor@<selected-version> -- dsh-doctor`, in every phase. Command examples use POSIX shell syntax (bash, zsh, Git Bash); in PowerShell or cmd, join lines continued with `\` into a single line before running them.
 
 ## Compatibility decision gate
 
-An upgrade request does not say whether the developer accepts dropping DSH 0.1.1. Write authorization also does not answer that product decision. Do not infer the answer from the current peer range, the word "upgrade," or the fact that a 0.1.2-only rewrite is simpler.
+An upgrade request does not say whether the developer accepts dropping DSH 0.1.1, and write authorization does not answer that product decision. The current peer range, the word "upgrade," and the fact that a 0.1.2-only rewrite is simpler are all weak evidence — only the developer's explicit choice settles it.
 
-You may inspect files, bootstrap the CLI, and run read-only analysis to collect evidence. Before any `migrate apply` preview, source or manifest edit, dependency install, build, or runtime command:
+You may inspect files, bootstrap the CLI, and run read-only analysis first. Before any `migrate apply` preview, source or manifest edit, dependency install, build, or runtime command, the compatibility intent must come from one of:
 
-1. record an explicit choice already present in the developer's request; or
-2. ask: **"Should the same upgraded plugin release continue to support DSH 0.1.1, or may it target DSH 0.1.2 only?"**
+1. an explicit choice already present in the developer's request; or
+2. the developer's own reply to: **"Should the same upgraded plugin release continue to support DSH 0.1.1, or may it target DSH 0.1.2 only?"**
 
-If the answer is unavailable or ambiguous, stop at `analyzed`, identify the compatibility decision as pending, and do not modify the plugin. Follow the selected path in [compatibility-strategy.md](references/compatibility-strategy.md):
+No other resolution counts. Do not simulate, assume, or fabricate a reply the developer did not give — a question the developer has not genuinely answered means the gate is still pending. The plugin may be migrated only after the developer has actually made the choice.
 
-- **0.1.2-only:** the catalog's exact rewrites may be applied after their normal preview and write confirmation.
-- **dual-version:** treat every 0.1.2 rewrite as a candidate, not an automatically compatible change. Design and review an adapter or conditional entry/build approach before writing. If the same release cannot honestly support both versions, explain the conflict and ask whether separate releases are acceptable; that changes the compatibility intent and must not be presented as same-release dual compatibility.
+If the answer is unavailable or ambiguous, stop at `analyzed`, report the compatibility decision as pending, and leave the plugin unmodified. Follow the selected path in [compatibility-strategy.md](references/compatibility-strategy.md): it defines the three intents (`0.1.2-only`, `dual-version`, `pending developer decision`) and the write policy for each. In particular, `dual-version` treats every 0.1.2 catalog rewrite as a candidate needing cross-version design and review before any write, never an automatically compatible change.
 
 ## Phase 1: analyze
 
@@ -59,11 +60,11 @@ dsh-doctor migrate analyze <plugin-root> \
   --json
 ```
 
-Append `--harness-root <deepseek-harness-root>` when the checkout is available. Prefer an exact Harness checkout so the CLI verifies both tag commits. Both tags must exist and resolve to the commits recorded by the catalog; fetch the repository tags first when a shallow checkout lacks them. Without `--harness-root`, analysis is catalog-only and must be reported as such.
+Append `--harness-root <deepseek-harness-root>` when the checkout is available. Prefer an exact Harness checkout so the CLI verifies both tag commits. Both tags must exist and resolve to the commits recorded by the catalog; fetch the repository tags first when a shallow checkout lacks them. Without `--harness-root`, analysis is catalog-only — report it as such.
 
-Follow `source-investigation.md` to record the actual PATH or explicit DSH command, installed package, profile, plugin manifest and resolved dependency versions. When the actual source or target differs from the catalog refs, inspect that additional ref interval separately with read-only Git commands. For each semantic finding, use its target module and the catalog reference paths to inspect the exact exported API and plugin callers; do not stop at naming a likely new owner.
+Follow `source-investigation.md` to record the actual PATH or explicit DSH command, installed package, profile, plugin manifest and resolved dependency versions. When the actual source or target differs from the catalog pair declared above, inspect that additional interval separately with read-only Git commands. For each semantic finding, use its target module and the catalog reference paths to inspect the exact exported API and the plugin's callers — naming a likely new owner is not enough to plan the rewrite.
 
-The catalog reports the retained-package removal of `@deepseek-ai/dsh-settings.settingsNamespace` as semantic work. Remove only that named import, inject the `settings` Service, register through `ctx.settings.register(name, schema)`, and migrate any reads to the provider's current API. Do not remove still-exported symbols such as `SettingsConflictError` merely because they share the same import declaration.
+The catalog reports the retained-package removal of `@deepseek-ai/dsh-settings.settingsNamespace` as semantic work. Remove only that named import, inject the `settings` Service, register through `ctx.settings.register(name, schema)`, and migrate any reads to the provider's current API. Symbols 0.1.2 still exports (such as `SettingsConflictError`) must survive the edit even though they share the same import declaration.
 
 The static analyzer recognizes named imports and re-exports for retained-package symbol removals, but it does not resolve property access through namespace imports such as `import * as settings from '@deepseek-ai/dsh-settings'`. Search for and inspect those namespace bindings manually before declaring the semantic migration complete.
 
@@ -75,11 +76,11 @@ Group the result by:
 4. stale build artifacts;
 5. required verification gates.
 
-Do not infer compatibility from a clean bundled artifact alone. The analyzer intentionally scans TypeScript type imports, source files, package metadata, client graph declarations, and built output.
+A clean bundled artifact alone does not establish compatibility, which is why the analyzer deliberately scans TypeScript type imports, source files, package metadata, client graph declarations, and built output.
 
 ## Phase 2: apply exact changes
 
-Enter this phase only after the compatibility decision gate is resolved. The commands below are the 0.1.2-target migration path. For dual-version work, first apply the additional constraints in `compatibility-strategy.md`; do not assume a catalog-safe codemod is safe for 0.1.1.
+Enter this phase only after the compatibility decision gate is resolved. The commands below are the 0.1.2-target migration path. For dual-version work, first apply the additional constraints in `compatibility-strategy.md`: a catalog-safe codemod proves nothing about 0.1.1.
 
 Preview first:
 
@@ -100,6 +101,16 @@ dsh-doctor migrate apply <plugin-root> --safe --yes \
 The CLI binds the apply to the persisted report and edit hashes, creates timestamped backups, and refuses writes when the plugin analysis changed after preview. It may split a mixed import: exact symbols move to their new owners while semantic symbols remain unresolved. Dependency additions follow catalog-owned Client/Host and peer/dev policies instead of copying the removed package's old dependency section. It may pin non-removed DSH development dependencies. It does not widen the ranges of existing published peers automatically. Never mechanically replace the removed Client Runtime with one aggregate package; no such replacement exists.
 
 After apply, inspect every `MIG_SEMANTIC_API_CHANGE`. Rewrite behavior using the new domain owner and its current snapshot/lifecycle contract. Keep these edits separate enough to review and test.
+
+### If apply fails partway or you want to undo it
+
+Every file `migrate apply` overwrites is first copied to `<file>.dsh-doctor-<timestamp>.bak` next to the original; the apply output's `writes[]` records each file's `backup`, `beforeHash`, and `afterHash`. There is no `migrate rollback` subcommand — recover manually:
+
+1. Restore each modified file from its `.bak` for the apply run being undone (`cp <file>.dsh-doctor-<timestamp>.bak <file>`, or `Copy-Item -Force` in PowerShell), taking the backups of that exact run when several exist.
+2. Delete files apply created: they are the `writes[]` entries without a `backup` field.
+3. Re-run `migrate analyze` and compare with the pre-apply report to confirm the plugin is back to its prior state before continuing.
+
+Later analysis runs ignore leftover `.dsh-doctor-*` files, so backups can stay in place until the rollback is confirmed, then be deleted.
 
 ## Phase 3: verify
 
@@ -123,9 +134,21 @@ For a dual-version result, verify the produced release against both the actual 0
 
 ## Prepare for release when requested
 
-Verification prepares the plugin for release but does not publish it. If the developer explicitly asks to release the upgraded plugin, first follow the repository's own release instructions and confirm that required semantic and behavior checks are complete. Then update the plugin version and changelog, inspect the packed artifact, and use the repository's existing commit, tag, publish, and registry-verification workflow. Do not commit, tag, or publish merely because the migration skill was installed or run.
+Verification prepares the plugin for release but does not publish it. Release only when the developer explicitly asks: first follow the repository's own release instructions and confirm that required semantic and behavior checks are complete. Then update the plugin version and changelog, inspect the packed artifact, and use the repository's existing commit, tag, publish, and registry-verification workflow — the migration skill being installed or run is not, by itself, release authorization.
 
 For a `0.1.2-only` release, update the README or compatibility documentation to state the minimum actual 0.1.2 version, that the new release does not support 0.1.1, and which prior plugin release 0.1.1 users should retain when known. After changing the release version or any other packed metadata, rebuild, inspect the final-version tarball, and repeat the isolated runtime gate against that artifact before committing or tagging; evidence from a tarball carrying the previous plugin version is not final release evidence.
+
+## Pass criteria before reporting
+
+Call the migration complete only when every item holds:
+
+- compatibility intent recorded as `0.1.2-only` or `dual-version` (not pending);
+- every semantic finding resolved and reviewed, including namespace-import usages;
+- static verification passes with no blocking finding;
+- build and packed artifacts pass (`build` or `pack:check`, not `typecheck`/`test` alone);
+- runtime smoke passed against the exact target version in the isolated profile;
+- behavior checks executed with named evidence, or explicitly listed as remaining;
+- for `dual-version`: every required matrix row passed on both the 0.1.1 and 0.1.2 sides.
 
 ## Report the outcome
 

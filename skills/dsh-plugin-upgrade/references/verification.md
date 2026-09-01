@@ -4,7 +4,7 @@
 
 Static analysis covers source/type imports, dependency ranges, client graph declarations, and generated artifacts. A pass means no known blocking finding; it does not execute project code.
 
-The current known static target is alpha.3. When the actual target is later than that catalog ref on the same 0.1.2 release line, first inspect the additional interval, then use `--target-version <version>` at every phase. The report keeps `migration.to` as the catalog ref and records `migration.actualTarget` separately, so a successful dependency or runtime check cannot be mistaken for catalog coverage of the additional API delta.
+The current known static target is the catalog target declared in SKILL.md. When the actual target is later than that catalog ref on the same 0.1.2 release line, first inspect the additional interval, then use `--target-version <version>` at every phase. The report keeps `migration.to` as the catalog ref and records `migration.actualTarget` separately, so a successful dependency or runtime check cannot be mistaken for catalog coverage of the additional API delta.
 
 ## Build
 

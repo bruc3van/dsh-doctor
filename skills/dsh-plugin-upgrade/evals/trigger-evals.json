@@ -1,0 +1,22 @@
+[
+  {"query": "My plugin still imports from @deepseek-ai/dsh-client-runtime and I saw DSH 0.1.2 removed it. What do I need to change to get my plugin building against 0.1.2? The repo is at ~/code/dsh-plugin-quicknotes", "should_trigger": true},
+  {"query": "We're preparing our DSH plugin release for the 0.1.2 harness. Can you check whether anything in our dependency ranges or client graph declaration needs updating before we cut the release?", "should_trigger": true},
+  {"query": "升级 DSH 到 0.1.2 之后我的插件加载不出来了，报 settingsNamespace is not a function。帮我把插件迁到 0.1.2。", "should_trigger": true},
+  {"query": "dsh-host-apiproxy was deleted in the new harness version and my browser automation plugin depends on it. Plan the migration to 0.1.2 for me.", "should_trigger": true},
+  {"query": "I want ONE plugin release that works on both DSH 0.1.1 and 0.1.2 - how do I restructure the imports from dsh-client-runtime so both harness versions can load it?", "should_trigger": true},
+  {"query": "Before I publish v2 of my plugin, verify it against DSH 0.1.2: dependency peers, built artifact, and a runtime activation smoke. Is the dsh-doctor tool the right way?", "should_trigger": true},
+  {"query": "我们的插件 peerDependencies 里写着 ~0.1.1，现在要支持 0.1.2，需要改哪些依赖范围？插件在 D:\\work\\dsh-plugin-kanban", "should_trigger": true},
+  {"query": "The migration analysis says MIG_SEMANTIC_API_CHANGE for every session import in my plugin. What does that mean and how do I finish the 0.1.2 migration properly?", "should_trigger": true},
+  {"query": "help me assess whether my dsh plugin is compatible with harness 0.1.2 or whether the session controller changes break my list view", "should_trigger": true},
+  {"query": "I checked out the harness at tag dsh-v0.1.2-alpha.3 and my plugin's typecheck now fails on dsh-client-runtime types. Migrate the plugin source to 0.1.2.", "should_trigger": true},
+  {"query": "My plugin already targets DSH 0.1.2 and worked fine yesterday, but today activation fails with 'service not found' after I updated my graphics driver. Debug it.", "should_trigger": false},
+  {"query": "How do I write my first DSH plugin? Walk me through the plugin manifest and a hello-world client entry for 0.1.2.", "should_trigger": false},
+  {"query": "dsh-doctor diagnose says my web profile has a corrupted cordis.patch.yml - how do I use dsh-doctor recover to fix my installation?", "should_trigger": false},
+  {"query": "我在 DSH 里配置代理一直不生效，帮我看看 ~/.dsh 下面的配置文件哪里写错了", "should_trigger": false},
+  {"query": "Review my DSH plugin's PR: it adds a new settings panel UI. Focus on React rendering correctness and Cordis lifecycle cleanup.", "should_trigger": false},
+  {"query": "What's the difference between the DSH profile bundles and patch layers? Explaining for a blog post I'm writing about the DeepSeek Harness architecture.", "should_trigger": false},
+  {"query": "My plugin build passes on 0.1.1 but eslint crashes with OOM on large files - help me fix the lint config.", "should_trigger": false},
+  {"query": "Write a GitHub Actions workflow to publish my DSH plugin to npm whenever I push a tag.", "should_trigger": false},
+  {"query": "dsh keeps using 100% CPU when my plugin's background timer runs. Find the performance bug in my plugin code.", "should_trigger": false},
+  {"query": "Can you update the dsh-doctor CLI itself from 0.5.3 to the latest version and check its changelog for breaking changes?", "should_trigger": false}
+]

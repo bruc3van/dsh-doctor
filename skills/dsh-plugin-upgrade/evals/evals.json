@@ -1,0 +1,55 @@
+{
+  "skill_name": "dsh-plugin-upgrade",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I maintain a DSH plugin (repo at <PLUGIN_ROOT>). DSH 0.1.2 dropped @deepseek-ai/dsh-client-runtime and my plugin imports it in src/. The next release only needs to support 0.1.2 - nobody on my team still runs 0.1.1, so it's fine to drop it. Work out what has to change and do the source migration. You can run commands in the plugin folder, but don't publish anything.",
+      "expected_output": "The agent records the 0.1.2-only intent from the request itself, bootstraps dsh-doctor, analyzes with the exact catalog refs, applies only the catalog-confirmed exact import moves to their new owners, and reports remaining verification gates without publishing or claiming release readiness.",
+      "files": ["evals/files/import-move-plugin"],
+      "expectations": [
+        "Records the compatibility intent as 0.1.2-only, treating the developer's own statement in the prompt as the explicit decision instead of re-asking or blocking",
+        "Maps the removed dsh-client-runtime symbols to their real 0.1.2 owners (createSnapshotStore/defineStore/shallowEqual/SnapshotStore to @deepseek-ai/dsh-client-store, ClientContext to @deepseek-ai/cordis Context) and never proposes an aggregate replacement package for dsh-client-runtime",
+        "Uses or constructs the dsh-doctor CLI flow (migrate analyze, then preview/apply via a plan file) with the catalog refs dsh-v0.1.1-rc.2 and dsh-v0.1.2-alpha.3, or clearly reports why the CLI could not run and proceeds from catalog knowledge with that limitation stated",
+        "Keeps the migration plan file outside the plugin root",
+        "Does not commit, tag, publish, or declare the plugin release-ready; reports the highest achieved gate and remaining verification steps"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "My plugin at <PLUGIN_ROOT> needs to move to DSH 0.1.2 (0.1.2-only, we're dropping 0.1.1 in this release). The tricky part: I use settingsNamespace from @deepseek-ai/dsh-settings in src/settings.ts and I heard it was removed. I also import SettingsConflictError in the same statement, and src/namespace-read.ts uses the settings module through `import * as settings`. Tell me what happens to these and make the changes.",
+      "expected_output": "The agent treats settingsNamespace removal as a semantic Service migration (inject the settings Service, register via ctx.settings.register), keeps SettingsConflictError, flags the namespace import for manual inspection, and rewrites reads against the provider's current API.",
+      "files": ["evals/files/settings-plugin"],
+      "expectations": [
+        "Treats the settingsNamespace removal as semantic work requiring a Service migration (inject the settings Service and register through ctx.settings.register(name, schema)), not as an automatic import move",
+        "Keeps SettingsConflictError (still exported in 0.1.2) instead of removing it together with settingsNamespace",
+        "Explicitly flags the `import * as settings` namespace usage in src/namespace-read.ts as something the static analyzer cannot resolve and inspects it manually",
+        "Migrates namespace reads (e.g. namespace.get) to the settings provider's current API (e.g. describe/get on the provider) instead of assuming the old factory object's methods still exist"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "My plugin at <PLUGIN_ROOT> still imports from @deepseek-ai/dsh-client-runtime/client. DSH 0.1.2 removed that package. Here's the constraint: my users are split between DSH 0.1.1 and 0.1.2 and I want ONE release that works on both - I don't want to maintain two plugin versions. Figure out how to handle this and start the work. Full write access granted.",
+      "expected_output": "The agent records the dual-version intent, treats every 0.1.2 catalog rewrite as a candidate needing cross-version review, proposes an evidence-grounded same-release mechanism, and defines the two-version verification matrix instead of applying the 0.1.2 codemod as automatically safe.",
+      "files": ["evals/files/import-move-plugin"],
+      "expectations": [
+        "Records the compatibility intent as dual-version (one release supporting both 0.1.1 and 0.1.2) from the prompt",
+        "Does not apply or recommend applying the 0.1.2 catalog codemod as automatically safe for 0.1.1; treats each rewrite as a candidate for cross-version review first",
+        "Proposes a concrete same-release compatibility mechanism grounded in plugin evidence (e.g. shared adapter with runtime feature detection or conditional version-specific entry/build) rather than guessing at dynamic loading",
+        "Defines a two-version verification matrix with evidence kept separate for 0.1.1 and 0.1.2 (dependency/peer resolution, build and packed artifact, isolated profile activation smoke, plugin behavior)",
+        "Never claims dual-version compatibility from 0.1.2-only evidence; states what remains unproven"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Migrate the plugin at <PLUGIN_ROOT> to DSH 0.1.2. You have full permission to change whatever is needed - just do it end to end and tell me when it's done.",
+      "expected_output": "The agent notices the request never says whether 0.1.1 support may be dropped, asks the explicit compatibility question, and then either proceeds only on a genuine developer reply or records the decision as pending and stays read-only until a genuine decision is made.",
+      "files": ["evals/files/import-move-plugin"],
+      "expectations": [
+        "Asks the explicit compatibility question (should the same upgraded release continue to support DSH 0.1.1, or may it target 0.1.2 only) or otherwise records the compatibility decision as pending developer decision",
+        "Distinguishes a genuine developer reply from a self-assumed one: only a real answer delivered by the developer (e.g. an answered question the harness returns) resolves the gate and lets the migration proceed; when no genuine answer is delivered, the agent must NOT assume, simulate, or fabricate a decision and must NOT treat the decision as resolved",
+        "Makes no source edits, dependency installs, builds, or migrate apply writes while the decision is pending; read-only analysis is acceptable",
+        "Reports the achieved gate as analyzed or lower with the pending compatibility decision called out, rather than declaring the migration done"
+      ]
+    }
+  ]
+}

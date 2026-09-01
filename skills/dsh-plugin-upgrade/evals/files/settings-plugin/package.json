@@ -1,0 +1,20 @@
+{
+  "name": "dsh-plugin-focus-timer",
+  "version": "1.0.4",
+  "description": "Pomodoro-style focus timer for DeepSeek Harness, built against DSH 0.1.1",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "build": "tsc -p . --emitDeclarationOnly false"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "~0.1.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings": "0.1.1-rc.2",
+    "typescript": "^5.6.0"
+  }
+}
