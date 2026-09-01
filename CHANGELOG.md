@@ -2,6 +2,25 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.5.7
+
+### 主要更新
+
+- 重构 `dsh-plugin-upgrade` Skill：把当前 migration catalog 的 source/target 精确版本集中到单一事实块，其他说明统一引用该版本对，减少 catalog 升级时的重复维护。
+- 补充更完整的插件迁移场景与触发样例，覆盖移除包的 import move、保留包中的符号移除、namespace import 人工调查，以及单版本与双版本兼容决策。
+- 修复 Skill 重构后契约测试仍匹配旧文案导致的 GitHub Actions 失败；测试现在直接验证新的 catalog 边界和精确版本声明。
+
+### 安装
+
+```sh
+npm install --global @bruc3van/dsh-doctor@0.5.7
+npx skills add bruc3van/dsh-doctor
+```
+
+### 验证
+
+- 完成 115 项 CLI、migration、runtime、文档与 Skill 契约测试，并检查 npm 发布包内容。
+
 ## v0.5.6
 
 ### 主要更新
