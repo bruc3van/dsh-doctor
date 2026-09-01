@@ -2,6 +2,23 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.5.8
+
+### 主要更新
+
+- 修复 `dsh-plugin-upgrade` 的 YAML frontmatter：将包含冒号的长 `description` 明确标记为字符串，解决 `npx skills add bruc3van/dsh-doctor` 报错并跳过 Skill 的问题。
+- 新增 frontmatter 结构回归测试，使用 YAML 解析器验证 `name` 和 `description`，避免仅靠文案匹配遗漏真实安装解析错误。
+
+### 安装
+
+```sh
+npx skills add bruc3van/dsh-doctor
+```
+
+### 验证
+
+- 完成 116 项 CLI、migration、runtime、文档与 Skill 测试，并通过 Skill 官方快速校验和真实 `skills add` 安装验证。
+
 ## v0.5.7
 
 ### 主要更新

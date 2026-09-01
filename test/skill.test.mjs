@@ -1,11 +1,22 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { load as parseYaml } from 'js-yaml'
 
 const skill = readFileSync(new URL('../skills/dsh-plugin-upgrade/SKILL.md', import.meta.url), 'utf8')
 const strategy = readFileSync(new URL('../skills/dsh-plugin-upgrade/references/compatibility-strategy.md', import.meta.url), 'utf8')
 const sourceInvestigation = readFileSync(new URL('../skills/dsh-plugin-upgrade/references/source-investigation.md', import.meta.url), 'utf8')
 const verification = readFileSync(new URL('../skills/dsh-plugin-upgrade/references/verification.md', import.meta.url), 'utf8')
+
+test('upgrade skill has valid discoverable YAML frontmatter', () => {
+  const match = skill.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  assert.ok(match, 'SKILL.md must start with YAML frontmatter')
+
+  const frontmatter = parseYaml(match[1])
+  assert.equal(frontmatter.name, 'dsh-plugin-upgrade')
+  assert.equal(typeof frontmatter.description, 'string')
+  assert.ok(frontmatter.description.length > 0)
+})
 
 test('upgrade skill blocks writes until legacy compatibility intent is explicit', () => {
   assert.match(skill, /Should the same upgraded plugin release continue to support DSH 0\.1\.1/)
