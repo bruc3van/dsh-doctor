@@ -11,7 +11,7 @@ dsh-doctor --version
 dsh-doctor migrations list --json
 ```
 
-Record the local version and whether the exact `dsh-v0.1.1-rc.2` to `dsh-v0.1.2-alpha.2` catalog is present. A command that exists but lacks this catalog is not usable for this skill.
+Record the local version and whether the exact current `dsh-v0.1.1-rc.2` to `dsh-v0.1.2-alpha.3` catalog is present. A command that exists but lacks this catalog is not usable for the current known target.
 
 ## 2. Check the registry without changing the machine
 
@@ -26,11 +26,13 @@ This is a read-only update check. If it fails because the registry is unavailabl
 ## 3. Select and pin one invocation
 
 - When the local version equals the registry version and exposes the catalog, use `dsh-doctor` directly.
-- When the local CLI is missing, differs from the registry version, or lacks the catalog, prefer the registry version through exact-version npx. First verify that version exposes the required catalog:
+- When the local CLI is missing, differs from the registry version, or lacks the catalog, prefer the registry version through an exact-version package runner. First verify that version exposes the required catalog:
 
 ```sh
-npx --yes --package=@bruc3van/dsh-doctor@<registry-version> dsh-doctor migrations list --json
+npm exec --yes --package=@bruc3van/dsh-doctor@<registry-version> -- dsh-doctor migrations list --json
 ```
+
+This `npm exec ... -- dsh-doctor` form is the preferred cross-platform invocation. On Windows, `npx --package=... dsh-doctor` can fail to resolve the temporary binary when launched from an unrelated project root. A direct `npx --yes @bruc3van/dsh-doctor@<version> ...` smoke from a fresh temporary directory is also acceptable, but keep one verified invocation for the whole migration.
 
 - When the registry is unavailable, use the local CLI only if its catalog check passed.
 - When neither candidate exposes the catalog, stop and report the missing prerequisite instead of guessing a compatible CLI.
@@ -54,6 +56,6 @@ Include these fields in the handoff:
 
 - local CLI version or `missing`;
 - registry version or `unknown`;
-- selected exact version and invocation source (`local`, `npx`, or authorized `global-install`);
+- selected exact version and invocation source (`local`, `npm-exec`, or authorized `global-install`);
 - required catalog present or absent;
 - update status: `current`, `outdated`, `missing`, or `unknown`.

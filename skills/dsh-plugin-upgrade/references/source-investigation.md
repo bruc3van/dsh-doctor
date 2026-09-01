@@ -70,6 +70,8 @@ Classify every additional difference as:
 
 Only the catalog-confirmed pair is eligible for the built-in safe codemod. Treat additional exact-looking changes as proposed manual edits until independently reviewed and tested.
 
+After the additional interval is reviewed, pass that exact version as `--target-version` in analyze, apply preview/apply, and verify. This is an explicit fallback for a newer 0.1.2 build that the current alpha.3 catalog does not yet cover. It changes DSH dependency-range validation, deterministic DSH development pins, and the runtime version expectation; it does not turn the unlisted interval into catalog-confirmed API knowledge. Use `--dsh-command` to name the executable that actually reports and runs that version, and update the catalog and skill deliberately when that build becomes the new known target.
+
 ## 4. Investigate each semantic task in the plugin
 
 Start from the finding's `file`, `symbol`, `targetModule`, `targetSymbol`, and `reason`. Then:

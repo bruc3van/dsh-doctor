@@ -2,6 +2,26 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.5.6
+
+### 主要更新
+
+- migration catalog 新增精确目标 `dsh-v0.1.2-alpha.3` 并设为默认值，同时保留 alpha.2 历史 catalog；补充 alpha.3 的包增删变化，并记录保留包 `@deepseek-ai/dsh-settings` 中 `settingsNamespace` 被移除后的 Settings Provider 语义迁移。
+- 新增 `--target-version`，将 catalog 的已知 API 规则与经过额外源码调查的实际 0.1.2 目标分开；实际目标会绑定依赖检查、safe plan、报告哈希与 runtime 版本核验，并拒绝跨 release line 或早于 catalog 的版本。
+- 静态分析现在识别保留包的 named import 和 named re-export 符号移除，同时避免误报同一模块中仍存在的导出；namespace import 的属性访问明确保留为人工调查边界。
+- Skill 与中英文文档同步 alpha.3 catalog、`npm exec` 固定版本调用、实际版本调查流程、Settings Provider 迁移指引，以及 pnpm `minimumReleaseAgeExclude` 供应链策略的精确版本例外。
+
+### 安装
+
+```sh
+npm install --global @bruc3van/dsh-doctor@0.5.6
+npx skills add bruc3van/dsh-doctor
+```
+
+### 验证
+
+- 完成 115 项 CLI、migration、runtime、文档与 Skill 契约测试；新增保留包符号移除、named re-export、future target pin、旧 prerelease 拒绝、plan 版本绑定和 alpha.3 runtime 回归覆盖。
+
 ## v0.5.5
 
 ### 主要更新

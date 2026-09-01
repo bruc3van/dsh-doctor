@@ -56,11 +56,13 @@ test('CLI exposes the package version and repair flags', () => {
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' })
   assert.match(help.stdout, /--fix, --repair/)
   assert.match(help.stdout, /--yes/)
+  assert.match(help.stdout, /--target-version/)
 
   const chineseHelp = spawnSync(process.execPath, [cli, '--lang', 'zh', '--help'], { encoding: 'utf8' })
   assert.equal(chineseHelp.status, 0)
   assert.match(chineseHelp.stdout, /检查选定的 profile/)
   assert.match(chineseHelp.stdout, /输出机器可读 JSON/)
+  assert.match(chineseHelp.stdout, /--target-version <版本>/)
   assert.doesNotMatch(chineseHelp.stdout, /inspect the selected profile|print machine-readable JSON/)
 
   const helpWithIrrelevantFlags = spawnSync(process.execPath, [cli, '--yes', '--lang', 'fr', '--help'], { encoding: 'utf8' })

@@ -19,6 +19,10 @@ Session snapshots no longer own Conversation views or all pending-interaction fa
 
 `@deepseek-ai/dsh-host-apiproxy` was removed. Browser operations use their natural generated Remote owners through API Remotes/API Gateway contributions. There is no facade-compatible package substitution.
 
+## Settings registration
+
+`@deepseek-ai/dsh-settings` remains, but its `settingsNamespace` factory export was removed in 0.1.2-alpha.2. This is a semantic Service migration, not an import move: inject the `settings` Service and register the plugin namespace through `ctx.settings.register(name, schema)`. Keep `SettingsConflictError` or other exports that still exist, and verify every namespace read path against the provider API (for example `describe`) instead of assuming the former factory object's methods still exist.
+
 ## Client graph
 
 - `dsh.client.inject` declares package dependency edges; Cordis service injection still controls activation.
@@ -39,4 +43,4 @@ Do not copy a replacement package into every dependency section that contained `
 
 For `MIG_PATCH_TARGET_CHANGED`, first confirm the Harness checkout is exact and its tag scan succeeded. Then compare the old and target web profile bundle patches: remove an obsolete override only when the old row disappeared without a replacement, or update the id when upstream deliberately renamed/moved the row. Do not guess a replacement id from a similar name.
 
-The machine-readable source of truth ships with DSH Doctor. Confirm the installed CLI exposes this exact version pair with `dsh-doctor migrations list`; the canonical catalog source is also available in the [DSH Doctor repository](https://github.com/bruc3van/dsh-doctor/tree/master/migrations/dsh-v0.1.1-rc.2__dsh-v0.1.2-alpha.2).
+The machine-readable source of truth ships with DSH Doctor. Confirm the installed CLI exposes the current exact version pair with `dsh-doctor migrations list`; the canonical catalog source is also available in the [DSH Doctor repository](https://github.com/bruc3van/dsh-doctor/tree/master/migrations/dsh-v0.1.1-rc.2__dsh-v0.1.2-alpha.3). The older alpha.2 catalog remains historical evidence, not the current default.

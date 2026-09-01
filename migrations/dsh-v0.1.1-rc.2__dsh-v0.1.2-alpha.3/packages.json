@@ -2,9 +2,11 @@
   "removed": [
     "@deepseek-ai/dsh-acp-demo",
     "@deepseek-ai/dsh-acp-snapshot",
+    "@deepseek-ai/dsh-agent-spine-demo",
     "@deepseek-ai/dsh-client-runtime",
     "@deepseek-ai/dsh-host-apiproxy",
-    "@deepseek-ai/dsh-sdk-jsonrpc-demo"
+    "@deepseek-ai/dsh-sdk-jsonrpc-demo",
+    "@deepseek-ai/dsh-session-persistence-sqlite"
   ],
   "added": [
     "@deepseek-ai/dsh-acp-app",
@@ -29,6 +31,7 @@
     "@deepseek-ai/dsh-sdk-minimal",
     "@deepseek-ai/dsh-session-log-deepseek",
     "@deepseek-ai/dsh-session-snapshot",
+    "@deepseek-ai/dsh-session-turn-outline",
     "@deepseek-ai/dsh-util-crypto",
     "@deepseek-ai/dsh-util-time",
     "@deepseek-ai/dsh-util-values",

@@ -80,12 +80,17 @@ function moduleLiteral(node) {
 
 function namedImports(node) {
   const bindings = node.importClause?.namedBindings
-  if (!bindings || !ts.isNamedImports(bindings)) return []
-  return bindings.elements.map(item => ({
+  if (bindings && ts.isNamedImports(bindings)) return bindings.elements.map(item => ({
     imported: item.propertyName?.text ?? item.name.text,
     local: item.name.text,
     typeOnly: node.importClause.isTypeOnly || item.isTypeOnly,
   }))
+  if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) return node.exportClause.elements.map(item => ({
+    imported: item.propertyName?.text ?? item.name.text,
+    local: item.name.text,
+    typeOnly: node.isTypeOnly || item.isTypeOnly,
+  }))
+  return []
 }
 
 function quoteModule(text) {
@@ -117,10 +122,11 @@ function analyzeFile(file, pluginRoot, catalog, origin) {
       handledLiterals.add(literal)
       const moduleName = literal.text
       const rootName = packageRoot(moduleName)
-      if (removed.has(rootName)) {
+      const moduleRemoved = removed.has(rootName)
+      const symbolRules = catalog.symbols.modules[moduleName]
+      if (moduleRemoved || symbolRules !== undefined) {
         const where = location(source, literal, pluginRoot)
-        const symbolRules = catalog.symbols.modules[moduleName]
-        const specs = ts.isImportDeclaration(node) ? namedImports(node) : []
+        const specs = namedImports(node)
         const exact = []
         const remaining = []
         for (const spec of specs) {
@@ -128,7 +134,7 @@ function analyzeFile(file, pluginRoot, catalog, origin) {
           if (rule?.confidence === 'exact') {
             exact.push({ ...spec, imported: rule.toSymbol, toModule: rule.toModule, fromSymbol: spec.imported, reason: rule.reason })
             findings.push({ code: 'MIG_MOVED_SYMBOL', severity: 'error', message: `${spec.imported} moved to ${rule.toModule}`, location: where, evidence: { module: moduleName, symbol: spec.imported, targetModule: rule.toModule, replacement: rule.toSymbol }, autoFix: 'safe' })
-          } else {
+          } else if (rule?.confidence === 'semantic' || moduleRemoved) {
             remaining.push(spec)
             const semantic = rule?.confidence === 'semantic'
             findings.push({ code: semantic ? 'MIG_SEMANTIC_API_CHANGE' : 'MIG_REMOVED_PACKAGE_REFERENCE', severity: 'error', message: semantic ? `${spec.imported} requires a semantic migration: ${rule.reason}` : `${moduleName} was removed without a safe automatic replacement`, location: where, evidence: { module: moduleName, ...(spec.imported ? { symbol: spec.imported } : {}) }, autoFix: 'none' })
@@ -140,7 +146,7 @@ function analyzeFile(file, pluginRoot, catalog, origin) {
               ...(rule?.toSymbol ? { targetSymbol: rule.toSymbol } : {}),
               reason: rule?.reason ?? 'No exact replacement is known.',
             })
-          }
+          } else remaining.push(spec)
         }
         const declarationText = ts.isImportDeclaration(node) ? text.slice(node.getStart(source), node.getEnd()) : ''
         const simpleNamedImport = exact.length > 0 && ts.isImportDeclaration(node) && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings) && node.importClause.name === undefined && node.attributes === undefined && node.assertClause === undefined && !/\/(?:\/|\*)/.test(declarationText)
@@ -160,7 +166,7 @@ function analyzeFile(file, pluginRoot, catalog, origin) {
           const generated = [...groups].map(([target, items]) => importText(target, items, node.importClause.isTypeOnly))
           if (remaining.length > 0) generated.unshift(importText(moduleName, remaining, node.importClause.isTypeOnly))
           replacements.push({ start: node.getStart(source), end: node.getEnd(), next: generated.join('\n'), exact })
-        } else if (specs.length === 0 || exact.length > 0) {
+        } else if (moduleRemoved && (specs.length === 0 || exact.length > 0)) {
           for (const finding of findings) if (finding.code === 'MIG_MOVED_SYMBOL' && finding.location.line === where.line && exact.some(item => item.fromSymbol === finding.evidence.symbol)) finding.autoFix = 'none'
           findings.push({ code: 'MIG_REMOVED_PACKAGE_REFERENCE', severity: 'error', message: `${moduleName} was removed and this reference cannot be rewritten safely`, location: where, evidence: { module: moduleName, kind: ts.SyntaxKind[node.kind] }, autoFix: 'none' })
           unresolved.push({ file: where.file, package: rootName, module: moduleName, reason: 'Default, namespace, side-effect, export, require, dynamic import, or module augmentation reference.' })
@@ -189,12 +195,28 @@ function readManifest(pluginRoot) {
   return { file, value, text }
 }
 
-function targetVersion(name, catalog) {
-  if (catalog.packages.targetVersions?.[name] !== undefined) return catalog.packages.targetVersions[name]
-  return name.startsWith('@deepseek-ai/dsh-') ? catalog.manifest.to.version : undefined
+function actualTargetVersion(catalog, requested) {
+  if (requested === undefined) return catalog.manifest.to.version
+  const version = semver.valid(requested)
+  if (version === null) throw new Error(`--target-version must be an exact semantic version, received ${requested}`)
+  const catalogVersion = semver.parse(catalog.manifest.to.version)
+  const target = semver.parse(version)
+  if (catalogVersion === null || target === null || target.major !== catalogVersion.major || target.minor !== catalogVersion.minor || target.patch !== catalogVersion.patch) {
+    throw new Error(`--target-version ${requested} is outside the catalog's ${catalogVersion?.major}.${catalogVersion?.minor}.${catalogVersion?.patch} release line`)
+  }
+  if (semver.lt(target, catalogVersion)) {
+    throw new Error(`--target-version ${requested} predates the catalog target ${catalog.manifest.to.version}`)
+  }
+  return version
 }
 
-function manifestFindings(manifest, catalog) {
+function targetVersion(name, catalog, actualTarget) {
+  if (name.startsWith('@deepseek-ai/dsh-')) return actualTarget
+  if (catalog.packages.targetVersions?.[name] !== undefined) return catalog.packages.targetVersions[name]
+  return undefined
+}
+
+function manifestFindings(manifest, catalog, actualTarget) {
   const findings = []
   for (const field of DEPENDENCY_FIELDS) {
     const dependencyMap = manifest.value[field]
@@ -207,7 +229,7 @@ function manifestFindings(manifest, catalog) {
         findings.push({ code: 'MIG_REMOVED_PACKAGE_REFERENCE', severity: 'error', message: `${field}.${name} targets a removed package`, location: { file: 'package.json' }, evidence: { field, package: name, range }, autoFix: 'conditional' })
         continue
       }
-      const target = targetVersion(name, catalog)
+      const target = targetVersion(name, catalog, actualTarget)
       if (target === undefined) continue
       const validRange = typeof range === 'string' ? semver.validRange(range) : null
       if (validRange === null) findings.push({ code: 'MIG_INVALID_DEPENDENCY_RANGE', severity: 'error', message: `${field}.${name} has a non-registry range that cannot prove target compatibility`, location: { file: 'package.json' }, evidence: { field, package: name, range, target }, autoFix: field === 'devDependencies' ? 'safe' : 'none' })
@@ -307,7 +329,7 @@ function patchTargetFindings(pluginRoot, manifest, harness) {
   return findings
 }
 
-function planManifest(manifest, sourceResults, artifactResults, opaqueReferences, catalog) {
+function planManifest(manifest, sourceResults, artifactResults, opaqueReferences, catalog, actualTarget) {
   const next = structuredClone(manifest.value)
   const exactTargets = sourceResults.flatMap(result => result.exactTargets)
   const sourceReferences = new Set(sourceResults.flatMap(result => result.remainingPackages))
@@ -323,14 +345,14 @@ function planManifest(manifest, sourceResults, artifactResults, opaqueReferences
     }
     if (field === 'devDependencies') {
       for (const [name, range] of Object.entries(deps)) {
-        const target = targetVersion(name, catalog)
+        const target = targetVersion(name, catalog, actualTarget)
         if (target !== undefined && !catalog.packages.removed.includes(name) && (semver.validRange(range) === null || !semver.satisfies(target, range))) deps[name] = target
       }
     }
   }
   for (const move of new Map(exactTargets.map(item => [`${item.relationship}\0${item.toPackage}`, item])).values()) {
     const fields = catalog.packages.dependencyPolicies?.[move.toPackage]?.[move.relationship]
-    const version = targetVersion(move.toPackage, catalog)
+    const version = targetVersion(move.toPackage, catalog, actualTarget)
     if (!Array.isArray(fields) || version === undefined) continue
     for (const field of fields) {
       if (!DEPENDENCY_FIELDS.includes(field)) throw new Error(`migration catalog has an invalid dependency field ${field}`)
@@ -369,7 +391,8 @@ function analysisInputs(root) {
 export function analyzeMigration(pluginRoot = process.cwd(), options = {}) {
   const root = resolve(pluginRoot)
   if (!statSync(root).isDirectory()) throw new Error(`plugin root is not a directory: ${root}`)
-  const catalog = loadMigration(options.from ?? 'dsh-v0.1.1-rc.2', options.to ?? 'dsh-v0.1.2-alpha.2')
+  const catalog = loadMigration(options.from ?? 'dsh-v0.1.1-rc.2', options.to ?? 'dsh-v0.1.2-alpha.3')
+  const actualTarget = actualTargetVersion(catalog, options.targetVersion)
   const harness = verifyHarnessCheckout(catalog, options.harnessRoot)
   const manifest = readManifest(root)
   const sourceFiles = walk(root, SOURCE_DIRS_TO_SKIP).filter(file => !isTopLevelArtifact(root, file))
@@ -378,10 +401,10 @@ export function analyzeMigration(pluginRoot = process.cwd(), options = {}) {
   const opaqueReferences = opaqueReferenceFindings(root, sourceFiles, manifest, catalog)
   const sourceRemoved = sources.some(item => item.findings.some(finding => ['MIG_REMOVED_PACKAGE_REFERENCE', 'MIG_SEMANTIC_API_CHANGE', 'MIG_MOVED_SYMBOL'].includes(finding.code)))
   const artifactRemoved = artifacts.some(item => item.findings.some(finding => ['MIG_REMOVED_PACKAGE_REFERENCE', 'MIG_SEMANTIC_API_CHANGE', 'MIG_MOVED_SYMBOL'].includes(finding.code)))
-  const findings = [...manifestFindings(manifest, catalog), ...patchTargetFindings(root, manifest, harness), ...sources.flatMap(item => item.findings), ...opaqueReferences.findings, ...artifacts.flatMap(item => item.findings)]
+  const findings = [...manifestFindings(manifest, catalog, actualTarget), ...patchTargetFindings(root, manifest, harness), ...sources.flatMap(item => item.findings), ...opaqueReferences.findings, ...artifacts.flatMap(item => item.findings)]
   if (!sourceRemoved && artifactRemoved) findings.push({ code: 'MIG_SOURCE_ARTIFACT_DRIFT', severity: 'error', message: 'built artifacts still reference removed APIs although source files do not', location: { file: '.' }, evidence: { artifactDirectories: ARTIFACT_DIRS }, autoFix: 'none' })
   findings.push({ code: 'MIG_RUNTIME_VERIFICATION_REQUIRED', severity: 'info', message: 'static analysis cannot prove activation and lifecycle behavior; run migrate verify --level runtime', location: { file: '.' }, evidence: {}, autoFix: 'none' })
-  const manifestPlan = planManifest(manifest, sources, artifacts, opaqueReferences.packages, catalog)
+  const manifestPlan = planManifest(manifest, sources, artifacts, opaqueReferences.packages, catalog, actualTarget)
   const changed = [...sources.filter(item => item.changed), ...(manifestPlan.changed ? [manifestPlan] : [])]
   const safeEdits = changed.map(item => ({
     file: relativePath(root, item.file),
@@ -393,14 +416,21 @@ export function analyzeMigration(pluginRoot = process.cwd(), options = {}) {
   return {
     schemaVersion: 1,
     command: 'migrate analyze',
-    migration: { id: catalog.manifest.id, from: catalog.manifest.from, to: catalog.manifest.to, references: catalog.manifest.references ?? {}, harness },
+    migration: {
+      id: catalog.manifest.id,
+      from: catalog.manifest.from,
+      to: catalog.manifest.to,
+      actualTarget: { version: actualTarget, catalogVersion: catalog.manifest.to.version, catalogExact: actualTarget === catalog.manifest.to.version },
+      references: catalog.manifest.references ?? {},
+      harness,
+    },
     plugin: { root, name: manifest.value.name ?? basename(root), version: manifest.value.version ?? 'unknown', manifestFile: manifest.file, packageManager: existsSync(join(root, 'pnpm-lock.yaml')) ? 'pnpm' : existsSync(join(root, 'yarn.lock')) ? 'yarn' : 'npm' },
     summary: summarize(findings, safeEdits, unresolved),
     findings,
     safeEdits,
     semanticTasks: unresolved,
     sourceInvestigation: {
-      required: harness.exact !== true || unresolved.length > 0,
+      required: harness.exact !== true || unresolved.length > 0 || actualTarget !== catalog.manifest.to.version,
       targetRef: catalog.manifest.to.ref,
       catalogReferences: catalog.manifest.references ?? {},
       semanticTargets: [...new Set(unresolved.map(item => item.targetModule).filter(Boolean))],
@@ -429,6 +459,7 @@ export function createMigrationPlan(report) {
       id: report.migration.id,
       from: report.migration.from.ref,
       to: report.migration.to.ref,
+      targetVersion: report.migration.actualTarget.version,
       harness: {
         status: report.migration.harness.status,
         fromCommit: report.migration.harness.fromCommit,
@@ -453,7 +484,7 @@ function readMigrationPlan(file) {
 function assertMigrationPlan(report, plan) {
   const current = createMigrationPlan(report)
   if (plan.plugin.root !== current.plugin.root || plan.plugin.manifestFile !== current.plugin.manifestFile) throw new Error('migration plan targets a different plugin')
-  if (plan.migration.id !== current.migration.id || plan.migration.from !== current.migration.from || plan.migration.to !== current.migration.to) throw new Error('migration plan targets a different catalog')
+  if (plan.migration.id !== current.migration.id || plan.migration.from !== current.migration.from || plan.migration.to !== current.migration.to || plan.migration.targetVersion !== current.migration.targetVersion) throw new Error('migration plan targets a different catalog or actual target version')
   if (plan.reportHash !== current.reportHash || JSON.stringify(plan.inputs) !== JSON.stringify(current.inputs) || JSON.stringify(plan.edits) !== JSON.stringify(current.edits)) throw new Error('plugin analysis changed after the preview; create and review a new migration plan')
   return current
 }
@@ -478,7 +509,7 @@ export function applyMigration(report, options = {}) {
     if (currentExists !== item.snapshot.exists || sha256(current) !== item.snapshot.hash) throw new Error(`${item.snapshot.file} changed after the preview; diagnose again before applying`)
   }
   const writes = report._plan.map(item => ({ ...atomicWrite(item.snapshot, item.nextText), beforeHash: item.snapshot.hash, afterHash: sha256(item.nextText) }))
-  const verification = analyzeMigration(report.plugin.root, { from: report.migration.from.ref, to: report.migration.to.ref, harnessRoot: report.migration.harness.root })
+  const verification = analyzeMigration(report.plugin.root, { from: report.migration.from.ref, to: report.migration.to.ref, targetVersion: report.migration.actualTarget.version, harnessRoot: report.migration.harness.root })
   return { mode: 'applied', plan: { file: planFile, id: verifiedPlan.planId }, writes, report: publicMigrationReport(verification) }
 }
 

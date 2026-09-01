@@ -12,7 +12,7 @@ DSH 0.1.1 → DSH 0.1.2
 
 The project also diagnoses DSH profiles and installed plugins, checks for compatible versions, and performs safety checks before quarantine or removal.
 
-> This is a community-maintained third-party project, not an official DeepSeek project. The current catalog uses `dsh-v0.1.1-rc.2` and `dsh-v0.1.2-alpha.2` as the reference points for the 0.1.1-to-0.1.2 changes. An agent should still check actual differences when a plugin uses another patch or prerelease.
+> This is a community-maintained third-party project, not an official DeepSeek project. The migration scope remains DSH 0.1.1 → 0.1.2; the current known-latest catalog exactly covers `dsh-v0.1.1-rc.2` through `dsh-v0.1.2-alpha.3`. The older alpha.2 catalog remains as historical rules. When a newer 0.1.2 prerelease appears, inspect its delta before deliberately updating the catalog and skill.
 
 ## Upgrade a plugin with the skill
 
@@ -115,7 +115,7 @@ Node.js `^22.19.0` or `>=24.0.0` is required.
 First confirm that the CLI contains the required migration:
 
 ```sh
-npx --yes --package=@bruc3van/dsh-doctor@0.5.5 \
+npm exec --yes --package=@bruc3van/dsh-doctor@<selected-version> -- \
   dsh-doctor migrations list
 ```
 
@@ -124,12 +124,12 @@ npx --yes --package=@bruc3van/dsh-doctor@0.5.5 \
 ```sh
 dsh-doctor migrate analyze /path/to/plugin \
   --from dsh-v0.1.1-rc.2 \
-  --to dsh-v0.1.2-alpha.2 \
+  --to dsh-v0.1.2-alpha.3 \
   --harness-root /path/to/deepseek-harness \
   --json
 ```
 
-Analysis checks source, dependencies, manifest, client graph, patch targets, and existing build output without executing plugin code.
+Analysis checks source, dependencies, manifest, client graph, patch targets, and existing build output without executing plugin code. `--from`/`--to` select the exact catalog that supplies API rules. Alpha.3 is the current default, so it needs no separate `--target-version`. If a newer 0.1.2 build is explicitly targeted before the catalog is updated, inspect the source delta from alpha.3 first, then use `--target-version` to control dependency ranges, safe-plan pins, and the runtime version check. The report keeps the catalog and actual targets separate.
 
 ### 2. Apply
 
@@ -155,7 +155,7 @@ dsh-doctor migrate verify /path/to/plugin --level static \
 dsh-doctor migrate verify /path/to/plugin --level build --yes --install \
   --harness-root /path/to/deepseek-harness --json
 dsh-doctor migrate verify /path/to/plugin --level runtime --yes --install \
-  --harness-root /path/to/deepseek-harness --json
+  --dsh-command /path/to/dsh --json
 ```
 
 | Level | What it checks |

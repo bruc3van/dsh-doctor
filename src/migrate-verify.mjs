@@ -214,7 +214,8 @@ export function verifyMigration(pluginRoot = process.cwd(), options = {}) {
   const [versionCommand, versionArgs] = dshInvocation(dsh, ['--version'])
   const versionRun = commandResult(versionCommand, versionArgs, { cwd: root, env })
   const actualDshVersion = versionRun.stdout.trim()
-  const versionPassed = versionRun.passed && actualDshVersion === analysis.migration.to.version
+  const expectedDshVersion = analysis.migration.actualTarget.version
+  const versionPassed = versionRun.passed && actualDshVersion === expectedDshVersion
   const pack = commandResult(manager.command, manager.pack(packDir), { cwd: root })
   const tarball = tarballFromPack(pack, packDir)
   const runtimeCommands = []
@@ -236,7 +237,7 @@ export function verifyMigration(pluginRoot = process.cwd(), options = {}) {
   result.stages.push({
     name: 'runtime',
     passed: runtimePassed,
-    dshVersion: { expected: analysis.migration.to.version, actual: actualDshVersion, passed: versionPassed, command: commandEvidence(versionRun) },
+    dshVersion: { expected: expectedDshVersion, catalog: analysis.migration.to.version, actual: actualDshVersion, passed: versionPassed, command: commandEvidence(versionRun) },
     pack: commandEvidence(pack),
     tarball,
     commands: runtimeCommands.map(commandEvidence),

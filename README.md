@@ -12,7 +12,7 @@ DSH 0.1.1 → DSH 0.1.2
 
 项目同时提供 DSH profile 和插件的诊断、兼容版本检查、隔离与删除前检查。
 
-> 这是社区维护的第三方工具，不属于 DeepSeek 官方项目。当前 catalog 以 `dsh-v0.1.1-rc.2` 和 `dsh-v0.1.2-alpha.2` 为基准记录 0.1.1 到 0.1.2 的变化；插件使用其他 patch 或预发布版本时，Agent 仍需核对实际差异。
+> 这是社区维护的第三方工具，不属于 DeepSeek 官方项目。工具的迁移范围保持为 DSH 0.1.1 → 0.1.2；当前已知最新版 catalog 精确覆盖 `dsh-v0.1.1-rc.2` 到 `dsh-v0.1.2-alpha.3`。旧 alpha.2 catalog 作为历史规则保留；出现更新的 0.1.2 预发布版本时，需要先核对增量，再明确更新 catalog 和 Skill。
 
 ## 使用 Skill 升级插件
 
@@ -115,7 +115,7 @@ Migration catalog 保存 source/target tag 和 Git commit，并记录 package、
 先确认 CLI 包含需要的迁移：
 
 ```sh
-npx --yes --package=@bruc3van/dsh-doctor@0.5.5 \
+npm exec --yes --package=@bruc3van/dsh-doctor@<selected-version> -- \
   dsh-doctor migrations list
 ```
 
@@ -124,12 +124,12 @@ npx --yes --package=@bruc3van/dsh-doctor@0.5.5 \
 ```sh
 dsh-doctor migrate analyze /path/to/plugin \
   --from dsh-v0.1.1-rc.2 \
-  --to dsh-v0.1.2-alpha.2 \
+  --to dsh-v0.1.2-alpha.3 \
   --harness-root /path/to/deepseek-harness \
   --json
 ```
 
-分析会检查源码、依赖、manifest、client graph、patch target 和已有构建产物，不执行插件代码。
+分析会检查源码、依赖、manifest、client graph、patch target 和已有构建产物，不执行插件代码。`--from`/`--to` 选择提供 API 规则的精确 catalog。当前默认目标就是 alpha.3，无需额外指定 `--target-version`；如果在 catalog 更新前明确迁移到更新的 0.1.2 版本，必须先调查 alpha.3 到该版本的源码差异，再用 `--target-version` 单独控制依赖范围、safe plan pin 和 runtime 版本核验。报告会保留 catalog 与实际目标两个值。
 
 ### 2. 修改
 
@@ -155,7 +155,7 @@ dsh-doctor migrate verify /path/to/plugin --level static \
 dsh-doctor migrate verify /path/to/plugin --level build --yes --install \
   --harness-root /path/to/deepseek-harness --json
 dsh-doctor migrate verify /path/to/plugin --level runtime --yes --install \
-  --harness-root /path/to/deepseek-harness --json
+  --dsh-command /path/to/dsh --json
 ```
 
 | 级别 | 验证内容 |
