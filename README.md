@@ -19,19 +19,24 @@ DSH Doctor 是给 DSH 插件开发者和 Agent 使用的升级、排障工具。
 
 这些能力既可以由 Agent 通过 Skill 编排，也可以作为结构化 CLI 能力集成到其他工具中。
 
-## 推荐方式：让 Agent 使用 Skill
+## 推荐方式：让 Agent 安装并使用 Skill
 
-安装仓库中的 [`dsh-plugin-upgrade`](skills/dsh-plugin-upgrade/SKILL.md) Skill：
+向你的 Agent 发送以下提示词：
+
+```text
+帮我安装这个 Skill：https://github.com/bruc3van/dsh-doctor，并告诉我如何使用。
+```
+
+也可以手动安装仓库中的 [`dsh-plugin-upgrade`](skills/dsh-plugin-upgrade/SKILL.md) Skill：
 
 ```sh
 npx skills add bruc3van/dsh-doctor
 ```
 
-然后在插件仓库中告诉 Agent：
+安装完成后，在需要迁移的插件仓库中告诉 Agent：
 
 ```text
-请把当前插件从 DSH 0.1.1 升级到 DSH 0.1.2。
-先分析兼容问题，再修改代码，最后完成构建和运行时验证。
+请调整并验证当前插件，使其兼容 DSH 0.1.2。
 ```
 
 Skill 会引导 Agent：

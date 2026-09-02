@@ -19,19 +19,24 @@ When a change depends on the plugin's business logic, Doctor calls it out for th
 
 Agents can orchestrate these capabilities through the skill, while other tools can integrate the same structured CLI workflows.
 
-## Recommended: use the skill with an agent
+## Recommended: ask an agent to install and use the skill
 
-Install the repository's [`dsh-plugin-upgrade`](skills/dsh-plugin-upgrade/SKILL.md) skill:
+Send this prompt to your agent:
+
+```text
+Install this skill: https://github.com/bruc3van/dsh-doctor, and tell me how to use it.
+```
+
+You can also install the repository's [`dsh-plugin-upgrade`](skills/dsh-plugin-upgrade/SKILL.md) skill manually:
 
 ```sh
 npx skills add bruc3van/dsh-doctor
 ```
 
-Then ask the agent from inside the plugin repository:
+After installation, ask the agent from inside the plugin repository that needs migration:
 
 ```text
-Upgrade this plugin from DSH 0.1.1 to DSH 0.1.2.
-Analyze compatibility first, modify the code, then complete build and runtime verification.
+Adjust and verify this plugin so that it is compatible with DSH 0.1.2.
 ```
 
 The skill guides the agent to:
