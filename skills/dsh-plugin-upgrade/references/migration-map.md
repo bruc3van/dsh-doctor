@@ -23,6 +23,12 @@ Session snapshots no longer own Conversation views or all pending-interaction fa
 
 `@deepseek-ai/dsh-settings` remains, but its `settingsNamespace` factory export was removed in 0.1.2-alpha.2. This is a semantic Service migration, not an import move: inject the `settings` Service and register the plugin namespace through `ctx.settings.register(name, schema)`. Keep `SettingsConflictError` or other exports that still exist, and verify every namespace read path against the provider API (for example `describe`) instead of assuming the former factory object's methods still exist.
 
+## Packages removed after alpha.3
+
+`@deepseek-ai/dsh-tool-subagent-report` was removed: child reporting and parent follow-up were unified into one Steer messaging operation. The runtime surface is `SubagentRuntime.sendMessage` over one adjacent parent/child edge, and the model-facing adapters live in `@deepseek-ai/dsh-tool-subagent-control`. A plugin that bundled or extended the report tool needs a semantic rewrite against that operation; there is no drop-in replacement package.
+
+`@deepseek-ai/dsh-code-runtime-python` was renamed to `@deepseek-ai/dsh-experimental-code-runtime-python` when the package moved to the experimental tier. Update module specifiers and dependency names together, then confirm with the developer that depending on an experimental-tier package is acceptable for the plugin's support posture; do not treat the rename as a silently compatible change.
+
 ## Client graph
 
 - `dsh.client.inject` declares package dependency edges; Cordis service injection still controls activation.

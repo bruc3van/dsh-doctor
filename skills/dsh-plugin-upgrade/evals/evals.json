@@ -9,7 +9,7 @@
       "expectations": [
         "Records the compatibility intent as 0.1.2-only, treating the developer's own statement in the prompt as the explicit decision instead of re-asking or blocking",
         "Maps the removed dsh-client-runtime symbols to their real 0.1.2 owners (createSnapshotStore/defineStore/shallowEqual/SnapshotStore to @deepseek-ai/dsh-client-store, ClientContext to @deepseek-ai/cordis Context) and never proposes an aggregate replacement package for dsh-client-runtime",
-        "Uses or constructs the dsh-doctor CLI flow (migrate analyze, then preview/apply via a plan file) with the catalog refs dsh-v0.1.1-rc.2 and dsh-v0.1.2-alpha.3, or clearly reports why the CLI could not run and proceeds from catalog knowledge with that limitation stated",
+        "Uses or constructs the dsh-doctor CLI flow (migrate analyze, then preview/apply via a plan file) with the catalog refs dsh-v0.1.1-rc.2 and dsh-v0.1.2-rc.1, or clearly reports why the CLI could not run and proceeds from catalog knowledge with that limitation stated",
         "Keeps the migration plan file outside the plugin root",
         "Does not commit, tag, publish, or declare the plugin release-ready; reports the highest achieved gate and remaining verification steps"
       ]

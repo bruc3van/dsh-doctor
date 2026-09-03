@@ -391,7 +391,7 @@ function analysisInputs(root) {
 export function analyzeMigration(pluginRoot = process.cwd(), options = {}) {
   const root = resolve(pluginRoot)
   if (!statSync(root).isDirectory()) throw new Error(`plugin root is not a directory: ${root}`)
-  const catalog = loadMigration(options.from ?? 'dsh-v0.1.1-rc.2', options.to ?? 'dsh-v0.1.2-alpha.3')
+  const catalog = loadMigration(options.from ?? 'dsh-v0.1.1-rc.2', options.to ?? 'dsh-v0.1.2-rc.1')
   const actualTarget = actualTargetVersion(catalog, options.targetVersion)
   const harness = verifyHarnessCheckout(catalog, options.harnessRoot)
   const manifest = readManifest(root)

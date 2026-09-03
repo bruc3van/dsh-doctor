@@ -1,0 +1,134 @@
+{
+  "modules": {
+    "@deepseek-ai/dsh-settings": {
+      "settingsNamespace": {
+        "toModule": "@deepseek-ai/dsh-settings",
+        "toSymbol": "SettingsProvider.register",
+        "confidence": "semantic",
+        "reason": "The settingsNamespace factory was removed. Inject the settings Service and register the namespace through ctx.settings.register(name, schema)."
+      }
+    },
+    "@deepseek-ai/dsh-client-runtime/client": {
+      "ClientContext": {
+        "toModule": "@deepseek-ai/cordis",
+        "toSymbol": "Context",
+        "confidence": "exact",
+        "reason": "ClientContext was a type alias of Cordis Context."
+      },
+      "createSnapshotStore": {
+        "toModule": "@deepseek-ai/dsh-client-store",
+        "toSymbol": "createSnapshotStore",
+        "confidence": "exact",
+        "reason": "The React-free store engine moved to client-store."
+      },
+      "defineStore": {
+        "toModule": "@deepseek-ai/dsh-client-store",
+        "toSymbol": "defineStore",
+        "confidence": "exact",
+        "reason": "The declarative store factory moved to client-store."
+      },
+      "ObservableSnapshot": {
+        "toModule": "@deepseek-ai/dsh-client-store",
+        "toSymbol": "ObservableSnapshot",
+        "confidence": "exact",
+        "reason": "The observable store contract moved to client-store."
+      },
+      "SnapshotStore": {
+        "toModule": "@deepseek-ai/dsh-client-store",
+        "toSymbol": "SnapshotStore",
+        "confidence": "exact",
+        "reason": "The writable store contract moved to client-store."
+      },
+      "shallowEqual": {
+        "toModule": "@deepseek-ai/dsh-client-store",
+        "toSymbol": "shallowEqual",
+        "confidence": "exact",
+        "reason": "The store equality helper moved to client-store."
+      },
+      "SessionId": {
+        "toModule": "@deepseek-ai/dsh-session/types",
+        "toSymbol": "SessionId",
+        "confidence": "exact",
+        "reason": "Session identity is owned by the Session domain."
+      },
+      "ISessions": {
+        "toModule": "@deepseek-ai/dsh-api-session-controller/client",
+        "toSymbol": "ISessions",
+        "confidence": "semantic",
+        "reason": "Session ownership moved to the Session Controller and its snapshots changed."
+      },
+      "Session": {
+        "toModule": "@deepseek-ai/dsh-api-session-controller/client",
+        "toSymbol": "Session",
+        "confidence": "semantic",
+        "reason": "The Client Session object and lifecycle moved to the Session Controller."
+      },
+      "SessionBinding": {
+        "toModule": "@deepseek-ai/dsh-api-session-controller/client",
+        "toSymbol": "SessionBinding",
+        "confidence": "semantic",
+        "reason": "Session bindings are now Controller-owned lifetimes."
+      },
+      "SessionListState": {
+        "toModule": "@deepseek-ai/dsh-api-session-controller/client",
+        "toSymbol": "SessionListState",
+        "confidence": "semantic",
+        "reason": "The list state moved and no longer owns Conversation or pending-interaction facts."
+      },
+      "SessionSummary": {
+        "toModule": "@deepseek-ai/dsh-api-session-controller/client",
+        "toSymbol": "SessionSummary",
+        "confidence": "semantic",
+        "reason": "The Session summary is now a Controller-owned control snapshot."
+      },
+      "UseProjection": {
+        "toModule": "@deepseek-ai/dsh-api-session-controller/client",
+        "toSymbol": "UseProjection",
+        "confidence": "semantic",
+        "reason": "Projection sources are now exposed by Session Controller bindings and adapted by ui-session."
+      },
+      "IWorkspaces": {
+        "toModule": "@deepseek-ai/dsh-api-workspace-controller/client",
+        "toSymbol": "IWorkspaces",
+        "confidence": "semantic",
+        "reason": "Workspace ownership moved to the Workspace Controller and navigation policy moved to ui-workspace."
+      },
+      "WorkspaceId": {
+        "toModule": "@deepseek-ai/dsh-api-workspace-controller/client",
+        "toSymbol": "WorkspaceId",
+        "confidence": "semantic",
+        "reason": "Workspace identity is re-exported by the Workspace Controller."
+      },
+      "WorkspaceView": {
+        "toModule": "@deepseek-ai/dsh-api-workspace-controller/client",
+        "toSymbol": "WorkspaceView",
+        "confidence": "semantic",
+        "reason": "Workspace snapshots are Controller-owned and their shape changed."
+      },
+      "ConversationNode": {
+        "toModule": "@deepseek-ai/dsh-client-ui-conversation/client",
+        "toSymbol": "ConversationNode",
+        "confidence": "semantic",
+        "reason": "Conversation assembly moved out of Session snapshots into ui-conversation."
+      },
+      "ConversationSnapshot": {
+        "toModule": "@deepseek-ai/dsh-client-ui-conversation/client",
+        "toSymbol": "ConversationSnapshot",
+        "confidence": "semantic",
+        "reason": "Conversation is now an independent target-neutral source."
+      },
+      "PendingInteraction": {
+        "toModule": "@deepseek-ai/dsh-client-ui-session/client",
+        "toSymbol": "SessionPendingInteraction",
+        "confidence": "semantic",
+        "reason": "Approval and Question now publish domain-owned pending interactions through ui-session."
+      },
+      "PendingWait": {
+        "toModule": "@deepseek-ai/dsh-client-ui-session/client",
+        "toSymbol": "SessionPendingInteraction",
+        "confidence": "semantic",
+        "reason": "The Runtime PendingWait aggregate was removed; pending domains own their payloads."
+      }
+    }
+  }
+}

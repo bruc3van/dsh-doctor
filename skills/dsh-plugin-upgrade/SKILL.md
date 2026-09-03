@@ -14,7 +14,7 @@ The migration knowledge covers the DSH 0.1.1 to 0.1.2 transition, derived and ve
 This block is the single source of truth for the exact refs. Every command below and every reference file defers to it; the references avoid repeating the literals on purpose. When the catalog advances, update this block, the `migrate analyze` example, and the shipped catalog together.
 
 - source ref: `dsh-v0.1.1-rc.2`
-- target ref: `dsh-v0.1.2-alpha.3`
+- target ref: `dsh-v0.1.2-rc.1`
 
 Standard commands target this pair and need no `--target-version`. If the developer explicitly targets a newer 0.1.2 build before the catalog is updated, inspect that additional interval first (see [source-investigation.md](references/source-investigation.md)), then pass its exact version to every migration phase as `--target-version <actual-0.1.2-version>`. That changes dependency pins and runtime expectations only; the catalog's API claims still end at the declared pair.
 
@@ -56,7 +56,7 @@ Run from any directory:
 ```sh
 dsh-doctor migrate analyze <plugin-root> \
   --from dsh-v0.1.1-rc.2 \
-  --to dsh-v0.1.2-alpha.3 \
+  --to dsh-v0.1.2-rc.1 \
   --json
 ```
 

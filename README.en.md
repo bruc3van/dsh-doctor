@@ -6,7 +6,7 @@ DSH Doctor is an upgrade and troubleshooting tool for DSH plugin developers and 
 
 When a change depends on the plugin's business logic, Doctor calls it out for the agent or developer instead of guessing. Every edit is previewed and backed up first, and runtime checks use a temporary DSH environment rather than the developer's everyday profile.
 
-> This is a community-maintained third-party project, not an official DeepSeek project. The current migration scope is DSH 0.1.1 → 0.1.2. The catalog exactly covers `dsh-v0.1.1-rc.2` → `dsh-v0.1.2-alpha.3` and retains the alpha.2 historical rules. Differences outside those catalogs still require a separate investigation and are not proven compatible by the catalog.
+> This is a community-maintained third-party project, not an official DeepSeek project. The current migration scope is DSH 0.1.1 → 0.1.2. The catalog exactly covers `dsh-v0.1.1-rc.2` → `dsh-v0.1.2-rc.1` and retains the alpha.2 and alpha.3 historical rules. Differences outside those catalogs still require a separate investigation and are not proven compatible by the catalog.
 
 ## What it helps with
 

@@ -2,6 +2,26 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.5.9
+
+### 主要更新
+
+- migration catalog 新增精确目标 `dsh-v0.1.2-rc.1`（对应 npm `@deepseek-ai/dsh@next` 已发布的 0.1.2-rc.1）并设为默认值，同时保留 alpha.2、alpha.3 历史 catalog。
+- 补充 alpha.3 之后发生的两个包级变化：`@deepseek-ai/dsh-tool-subagent-report` 被移除（子代理上报与 follow-up 统一为 Steer 消息操作，模型侧适配在 `dsh-tool-subagent-control`），以及 `@deepseek-ai/dsh-code-runtime-python` 改名为 `@deepseek-ai/dsh-experimental-code-runtime-python`。这两个包现在会按"已移除包"报告，而不是误导性的依赖范围不匹配。
+- Skill 的 catalog 版本对、`migrate analyze` 示例、中英文 README 与评测样例同步 rc.1；migration-map 新增 alpha.3 之后移除项的语义迁移指引。
+- 新增回归测试覆盖 rc.1 catalog 的移除包识别、未引用依赖的清理，以及"未来目标版本"场景（改用假想的 0.1.2-rc.2）。
+
+### 安装
+
+```sh
+npm install --global @bruc3van/dsh-doctor@0.5.9
+npx skills add bruc3van/dsh-doctor
+```
+
+### 验证
+
+- 完成 117 项 CLI、migration、runtime、文档与 Skill 契约测试；对照本地 deepseek-harness checkout 的 `dsh-v0.1.2-rc.1` tag 逐项复核包增删、符号迁移、cordis 4.0.2 与 bundle patch 路径，并用 npx 安装的真实 `dsh --version` 输出核验 runtime 版本比较。
+
 ## v0.5.8
 
 ### 主要更新

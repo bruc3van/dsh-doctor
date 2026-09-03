@@ -8,7 +8,7 @@
   {"query": "我们的插件 peerDependencies 里写着 ~0.1.1，现在要支持 0.1.2，需要改哪些依赖范围？插件在 D:\\work\\dsh-plugin-kanban", "should_trigger": true},
   {"query": "The migration analysis says MIG_SEMANTIC_API_CHANGE for every session import in my plugin. What does that mean and how do I finish the 0.1.2 migration properly?", "should_trigger": true},
   {"query": "help me assess whether my dsh plugin is compatible with harness 0.1.2 or whether the session controller changes break my list view", "should_trigger": true},
-  {"query": "I checked out the harness at tag dsh-v0.1.2-alpha.3 and my plugin's typecheck now fails on dsh-client-runtime types. Migrate the plugin source to 0.1.2.", "should_trigger": true},
+  {"query": "I checked out the harness at tag dsh-v0.1.2-rc.1 and my plugin's typecheck now fails on dsh-client-runtime types. Migrate the plugin source to 0.1.2.", "should_trigger": true},
   {"query": "My plugin already targets DSH 0.1.2 and worked fine yesterday, but today activation fails with 'service not found' after I updated my graphics driver. Debug it.", "should_trigger": false},
   {"query": "How do I write my first DSH plugin? Walk me through the plugin manifest and a hello-world client entry for 0.1.2.", "should_trigger": false},
   {"query": "dsh-doctor diagnose says my web profile has a corrupted cordis.patch.yml - how do I use dsh-doctor recover to fix my installation?", "should_trigger": false},

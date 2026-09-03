@@ -45,10 +45,10 @@ test('upgrade skill separates catalog rules from the actual 0.1.2 verification t
   assert.match(sourceInvestigation, /pass that exact version as `--target-version`/)
 })
 
-test('upgrade skill stays release-line generic while naming alpha.3 as the current exact target', () => {
+test('upgrade skill stays release-line generic while naming rc.1 as the current exact target', () => {
   assert.match(skill, /Upgrade a DSH 0\.1\.1 plugin to 0\.1\.2/)
   assert.match(skill, /source ref: `dsh-v0\.1\.1-rc\.2`/)
-  assert.match(skill, /target ref: `dsh-v0\.1\.2-alpha\.3`/)
+  assert.match(skill, /target ref: `dsh-v0\.1\.2-rc\.1`/)
   assert.match(skill, /Keep the skill's product scope at the release-line level/)
 })
 
