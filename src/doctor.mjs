@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync, readFileSync, readdirSync, realpathS
 import { builtinModules } from 'node:module'
 import { homedir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import crossSpawn from 'cross-spawn'
 import yaml from 'js-yaml'
 import semver from 'semver'
 import { parseDocument } from 'yaml'
@@ -246,6 +247,19 @@ function resolveDshCli(options, harness, home) {
     }
   }
   return undefined
+}
+
+function probeDshCli(dshCli, options = {}) {
+  if (dshCli === undefined) return { runnable: false }
+  if (typeof options.cliProbe === 'function') return options.cliProbe(dshCli)
+  const [command, ...args] = dshCli.command
+  const result = crossSpawn.sync(command, [...args, '--version'], { encoding: 'utf8', timeout: 15_000 })
+  if (result.status === 0) {
+    const version = (result.stdout ?? '').trim()
+    if (version !== '') return { runnable: true, version }
+  }
+  const detail = (result.error?.message ?? (result.stderr ?? '').trim())
+  return { runnable: false, probeError: detail !== '' ? detail : `exit status ${String(result.status)}` }
 }
 
 function workspacePackageDirectories(root) {
@@ -1244,6 +1258,13 @@ export function diagnose(options = {}) {
 
   const harness = resolveHarnessContext(home, options.harnessRoot, findings)
   const dshCli = resolveDshCli(options, harness, home)
+  const dshProbe = probeDshCli(dshCli, options)
+  if (dshCli !== undefined && !dshProbe.runnable) {
+    findings.push(finding('error', 'DSH_CLI_NOT_RUNNABLE', 'The resolved DSH CLI command does not execute.', {
+      evidence: `${dshCli.path}: ${dshProbe.probeError}`,
+      suggestion: 'Reinstall the DSH package backing this command, or pass --dsh-command pointing at a working dsh executable.',
+    }))
+  }
   let commandRepairNeeded = false
   const commandRepair = (id, description, args, metadata = {}) => {
     commandRepairNeeded = true
@@ -1540,7 +1561,7 @@ export function diagnose(options = {}) {
     bundleNames,
     profileManifest,
     lockfile,
-    dshCli: { available: dshCli !== undefined },
+    dshCli: { available: dshCli !== undefined && dshProbe.runnable },
   })
   return finish({
     home,
@@ -1554,7 +1575,7 @@ export function diagnose(options = {}) {
     lockfile,
     dshCli: dshCli === undefined
       ? { available: false, commandRepairNeeded }
-      : { available: true, commandRepairNeeded, ...dshCli },
+      : { available: dshProbe.runnable, commandRepairNeeded, ...dshCli, ...(dshProbe.version === undefined ? { probeError: dshProbe.probeError } : { version: dshProbe.version }) },
     packages,
     configuration,
     pluginDiagnoses,

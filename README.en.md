@@ -6,7 +6,7 @@ DSH Doctor is an upgrade and troubleshooting tool for DSH plugin developers and 
 
 When a change depends on the plugin's business logic, Doctor calls it out for the agent or developer instead of guessing. Every edit is previewed and backed up first, and runtime checks use a temporary DSH environment rather than the developer's everyday profile.
 
-> This is a community-maintained third-party project, not an official DeepSeek project. The current migration scope is DSH 0.1.1 → 0.1.2. The catalog exactly covers `dsh-v0.1.1-rc.2` → `dsh-v0.1.2-rc.1` and retains the alpha.2 and alpha.3 historical rules. Differences outside those catalogs still require a separate investigation and are not proven compatible by the catalog.
+> This is a community-maintained third-party project, not an official DeepSeek project. The current migration scope is DSH 0.1.1 → 0.1.5. The catalog exactly covers `dsh-v0.1.1-rc.2` → `dsh-v0.1.5-rc.2` and retains the 0.1.2 alpha.2, alpha.3, and rc.1 historical rules. Differences outside those catalogs still require a separate investigation and are not proven compatible by the catalog.
 
 ## What it helps with
 
@@ -36,21 +36,21 @@ npx skills add bruc3van/dsh-doctor
 After installation, ask the agent from inside the plugin repository that needs migration:
 
 ```text
-Adjust and verify this plugin so that it is compatible with DSH 0.1.2.
+Adjust and verify this plugin so that it is compatible with DSH 0.1.5.
 ```
 
 The skill guides the agent to:
 
 1. establish the plugin, actual DSH installation, Harness checkout, package manager, and usable DSH Doctor;
 2. analyze source, dependencies, configuration, patches, and existing artifacts;
-3. confirm whether the upgraded plugin release targets only 0.1.2 or must remain compatible with 0.1.1;
+3. confirm whether the upgraded plugin release targets only 0.1.5 or must remain compatible with 0.1.1;
 4. preview and apply exact changes allowed by that compatibility strategy, then handle semantic migrations that require business context;
 5. rebuild and report static, artifact, isolated-runtime, and business-behavior evidence separately;
 6. commit or publish through the plugin repository's own process only when the developer explicitly requests it.
 
 `npx skills add` installs agent instructions only; it does not install DSH Doctor globally. The skill checks the local CLI and npm registry first. If the local version is unsuitable, it runs a pinned version through `npm exec` without changing the global installation.
 
-An upgrade request does not itself authorize dropping the old runtime. When compatibility intent is missing, the skill may perform read-only analysis but asks before migration writes, dependency installation, build, or runtime commands. Dual-version mode requires separate 0.1.1 and 0.1.2 evidence; one 0.1.2 smoke test is not dual-version proof.
+An upgrade request does not itself authorize dropping the old runtime. When compatibility intent is missing, the skill may perform read-only analysis but asks before migration writes, dependency installation, build, or runtime commands. Dual-version mode requires separate 0.1.1 and 0.1.5 evidence; one 0.1.5 smoke test is not dual-version proof.
 
 ## How it works
 
@@ -72,9 +72,9 @@ investigate the actual environment
   → plugin business-behavior verification
 ```
 
-DSH 0.1.2 changes more than package versions. Legacy owners such as `dsh-client-runtime` and `dsh-host-apiproxy` were split, while Session, Workspace, Conversation, pending interaction, and Settings capabilities moved to new controllers, UI packages, or Services. The CLI only auto-edits relationships marked `exact`; ownership, lifecycle, and business-call changes are reported as `MIG_SEMANTIC_API_CHANGE`.
+Migrating from DSH 0.1.1 to 0.1.5 changes more than package versions. Legacy owners such as `dsh-client-runtime` and `dsh-host-apiproxy` were split, while Session, Workspace, Conversation, pending interaction, and Settings capabilities moved to new controllers, UI packages, or Services; between 0.1.2 and 0.1.5 no package was removed again, and the added session-format or sidebar packages are purely additive capabilities. The CLI only auto-edits relationships marked `exact`; ownership, lifecycle, and business-call changes are reported as `MIG_SEMANTIC_API_CHANGE`.
 
-With an exact Harness checkout, Doctor also verifies the commits behind the two catalog tags and compares entry ids in the target web profile. After the additional source interval has been investigated, `--target-version` can bind dependencies and runtime checks to a newer 0.1.2 target, but it does not extend the catalog's API claims.
+With an exact Harness checkout, Doctor also verifies the commits behind the two catalog tags and compares entry ids in the target web profile. After the additional source interval has been investigated, `--target-version` can bind dependencies and runtime checks to a newer 0.1.5 target, but it does not extend the catalog's API claims.
 
 ## Core capabilities
 

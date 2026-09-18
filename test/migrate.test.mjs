@@ -161,7 +161,7 @@ test('catalog dependency policy keeps client-store type relationships developmen
   applyWithReviewedPlan(root)
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   assert.equal(manifest.peerDependencies['@deepseek-ai/dsh-client-store'], undefined)
-  assert.equal(manifest.devDependencies['@deepseek-ai/dsh-client-store'], '0.1.2-rc.1')
+  assert.equal(manifest.devDependencies['@deepseek-ai/dsh-client-store'], '0.1.5-rc.2')
 })
 
 test('a source comment mentioning the removed package does not block exact dependency cleanup', () => {
@@ -201,7 +201,7 @@ test('safe apply pins target DSH development packages without widening peer cont
   } })
   applyWithReviewedPlan(root)
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-  assert.equal(manifest.devDependencies['@deepseek-ai/dsh-settings'], '0.1.2-rc.1')
+  assert.equal(manifest.devDependencies['@deepseek-ai/dsh-settings'], '0.1.5-rc.2')
   assert.equal(manifest.peerDependencies['@deepseek-ai/dsh-settings'], '^0.1.1')
 })
 
@@ -220,13 +220,13 @@ test('a separately investigated future target drives dependency checks without c
   const root = fixture({
     source: "import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-runtime/client'\nexport type State = ObservableSnapshot<string>\n",
     manifest: {
-      peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.2-rc.2' },
-      devDependencies: { '@deepseek-ai/dsh-settings': '0.1.2-rc.1' },
+      peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.5-rc.3' },
+      devDependencies: { '@deepseek-ai/dsh-settings': '0.1.5-rc.2' },
     },
   })
-  const options = { targetVersion: '0.1.2-rc.2' }
+  const options = { targetVersion: '0.1.5-rc.3' }
   const report = analyzeMigration(root, options)
-  assert.deepEqual(report.migration.actualTarget, { version: '0.1.2-rc.2', catalogVersion: '0.1.2-rc.1', catalogExact: false })
+  assert.deepEqual(report.migration.actualTarget, { version: '0.1.5-rc.3', catalogVersion: '0.1.5-rc.2', catalogExact: false })
   assert.equal(report.sourceInvestigation.required, true)
   assert.equal(report.findings.some(item => item.code === 'MIG_TARGET_PEER_RANGE_MISMATCH' && item.evidence.package === '@deepseek-ai/dsh-settings'), false)
 
@@ -234,17 +234,17 @@ test('a separately investigated future target drives dependency checks without c
   applyMigration(report, { ...options, safe: true, planFile })
   const applied = applyMigration(analyzeMigration(root, options), { ...options, safe: true, yes: true, planFile })
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-  assert.equal(manifest.devDependencies['@deepseek-ai/dsh-settings'], '0.1.2-rc.2')
-  assert.equal(manifest.devDependencies['@deepseek-ai/dsh-client-store'], '0.1.2-rc.2')
-  assert.equal(applied.report.migration.actualTarget.version, '0.1.2-rc.2')
+  assert.equal(manifest.devDependencies['@deepseek-ai/dsh-settings'], '0.1.5-rc.3')
+  assert.equal(manifest.devDependencies['@deepseek-ai/dsh-client-store'], '0.1.5-rc.3')
+  assert.equal(applied.report.migration.actualTarget.version, '0.1.5-rc.3')
 })
 
 test('actual target version stays inside the catalog release line', () => {
   const root = fixture()
   assert.throws(() => analyzeMigration(root, { targetVersion: 'latest' }), /exact semantic version/)
-  assert.throws(() => analyzeMigration(root, { targetVersion: '0.1.3-alpha.0' }), /outside the catalog's 0\.1\.2 release line/)
-  assert.throws(() => analyzeMigration(root, { targetVersion: '0.1.2-alpha.1' }), /predates the catalog target 0\.1\.2-rc\.1/)
-  assert.equal(analyzeMigration(root, { targetVersion: '0.1.2' }).migration.actualTarget.version, '0.1.2')
+  assert.throws(() => analyzeMigration(root, { targetVersion: '0.1.3-alpha.0' }), /outside the catalog's 0\.1\.5 release line/)
+  assert.throws(() => analyzeMigration(root, { targetVersion: '0.1.5-alpha.1' }), /predates the catalog target 0\.1\.5-rc\.2/)
+  assert.equal(analyzeMigration(root, { targetVersion: '0.1.5' }).migration.actualTarget.version, '0.1.5')
 })
 
 test('migration analysis validates client platform and immediately fields', () => {
@@ -353,7 +353,7 @@ test('runtime verification packs the real fixture and uses an isolated temporary
 import { join } from 'node:path'
 const args = process.argv.slice(2)
 if (!process.env.DSH_HOME?.includes('dsh-doctor-migrate-')) process.exit(3)
-if (args[0] === '--version') process.stdout.write('0.1.2-rc.1\\n')
+if (args[0] === '--version') process.stdout.write('0.1.5-rc.2\\n')
 else if (args[0] === 'plugin') {
   const profile = join(process.env.DSH_HOME, 'profiles', 'web')
   const installed = join(profile, 'node_modules', 'fixture-plugin')
@@ -382,7 +382,7 @@ else process.exit(4)
 test('runtime verification rejects a no-op command that only exits successfully', () => {
   const root = fixture({ source: 'export const ready = true\n', manifest: { peerDependencies: {}, scripts: { build: 'node -e "process.exit(0)"' } } })
   const fakeDsh = join(root, 'noop-dsh.mjs')
-  writeFileSync(fakeDsh, "if (process.argv.includes('--version')) process.stdout.write('0.1.2-rc.1\\n')\n")
+  writeFileSync(fakeDsh, "if (process.argv.includes('--version')) process.stdout.write('0.1.5-rc.2\\n')\n")
   const result = verifyMigration(root, { level: 'runtime', yes: true, install: true, dshCommand: fakeDsh })
   assert.equal(result.passed, false)
   assert.equal(result.status, 'artifact-verified')
@@ -427,25 +427,28 @@ test('Harness entry scanning uses authoritative web bundle patches and surfaces 
   assert.throws(() => verifyHarnessCheckout(catalog, harness), /web profile entry scan.*failed/)
 })
 
-test('the current rc.1 catalog is exact while the alpha catalogs remain available', () => {
-  const current = loadMigration('dsh-v0.1.1-rc.2', 'dsh-v0.1.2-rc.1')
+test('the current 0.1.5 catalog is exact while the 0.1.2 catalogs remain available', () => {
+  const current = loadMigration('dsh-v0.1.1-rc.2', 'dsh-v0.1.5-rc.2')
   assert.deepEqual(current.manifest.to, {
-    ref: 'dsh-v0.1.2-rc.1',
-    commit: 'a66e4702047846cdaa10c66c9d3df3951f5ea70d',
-    version: '0.1.2-rc.1',
+    ref: 'dsh-v0.1.5-rc.2',
+    commit: 'fb2c4b9e698e30edb738bca4cf0618587db7d203',
+    version: '0.1.5-rc.2',
   })
   assert.ok(current.packages.removed.includes('@deepseek-ai/dsh-agent-spine-demo'))
   assert.ok(current.packages.removed.includes('@deepseek-ai/dsh-session-persistence-sqlite'))
   assert.ok(current.packages.added.includes('@deepseek-ai/dsh-session-turn-outline'))
+  assert.ok(current.packages.added.includes('@deepseek-ai/dsh-session-format'))
   assert.deepEqual(current.packages.targetVersions, { '@deepseek-ai/cordis': '4.0.2' })
   assert.equal(current.symbols.modules['@deepseek-ai/dsh-settings'].settingsNamespace.confidence, 'semantic')
-  const previous = loadMigration('dsh-v0.1.1-rc.2', 'dsh-v0.1.2-alpha.3')
-  assert.equal(previous.manifest.to.version, '0.1.2-alpha.3')
+  const previous = loadMigration('dsh-v0.1.1-rc.2', 'dsh-v0.1.2-rc.1')
+  assert.equal(previous.manifest.to.version, '0.1.2-rc.1')
+  assert.equal(previous.manifest.to.commit, 'a66e4702047846cdaa10c66c9d3df3951f5ea70d')
+  assert.equal(loadMigration('dsh-v0.1.1-rc.2', 'dsh-v0.1.2-alpha.3').manifest.to.version, '0.1.2-alpha.3')
   assert.equal(loadMigration('dsh-v0.1.1-rc.2', 'dsh-v0.1.2-alpha.2').manifest.to.version, '0.1.2-alpha.2')
   assert.deepEqual(loadMigration('dsh-v0.1.1-rc.2', 'dsh-v0.1.2-alpha.2').packages.targetVersions, { '@deepseek-ai/cordis': '4.0.2' })
 })
 
-test('the rc.1 catalog flags packages removed after alpha.3 as removed, not as range mismatches', () => {
+test('the catalog flags packages removed after alpha.3 as removed, not as range mismatches', () => {
   const root = fixture({
     source: "export * from '@deepseek-ai/dsh-tool-subagent-report'\n",
     manifest: {
@@ -462,7 +465,7 @@ test('the rc.1 catalog flags packages removed after alpha.3 as removed, not as r
     assert.ok(report.findings.some(item => item.code === 'MIG_REMOVED_PACKAGE_REFERENCE' && item.evidence.package === name && item.evidence.field === 'devDependencies'), `${name} must be a removed dependency`)
     assert.equal(report.findings.some(item => item.code === 'MIG_TARGET_DEPENDENCY_RANGE_MISMATCH' && item.evidence.package === name), false)
   }
-  const catalog = loadMigration('dsh-v0.1.1-rc.2', 'dsh-v0.1.2-rc.1')
+  const catalog = loadMigration('dsh-v0.1.1-rc.2', 'dsh-v0.1.5-rc.2')
   assert.deepEqual(catalog.packages.semanticReplacements['@deepseek-ai/dsh-code-runtime-python'], ['@deepseek-ai/dsh-experimental-code-runtime-python'])
   assert.ok(catalog.packages.added.includes('@deepseek-ai/dsh-experimental-code-runtime-python'))
 
@@ -476,7 +479,7 @@ test('CLI lists catalogs and reports migration failures as one JSON document', (
   const cli = resolve('src/cli.mjs')
   let result = spawnSync(process.execPath, [cli, 'migrations', 'list', '--json'], { encoding: 'utf8' })
   assert.equal(result.status, 0)
-  assert.deepEqual(JSON.parse(result.stdout).migrations.map(item => item.to.ref), ['dsh-v0.1.2-alpha.2', 'dsh-v0.1.2-alpha.3', 'dsh-v0.1.2-rc.1'])
+  assert.deepEqual(JSON.parse(result.stdout).migrations.map(item => item.to.ref), ['dsh-v0.1.2-alpha.2', 'dsh-v0.1.2-alpha.3', 'dsh-v0.1.2-rc.1', 'dsh-v0.1.5-rc.2'])
 
   const root = fixture({ source: "import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'\n" })
   const planFile = migrationPlanFile()
@@ -512,7 +515,7 @@ test('CLI lists catalogs and reports migration failures as one JSON document', (
   assert.match(readFileSync(join(exactRoot, 'src', 'client.ts'), 'utf8'), /from '@deepseek-ai\/cordis'/)
 })
 
-test('runtime verification accepts a separately investigated future 0.1.2 target', () => {
+test('runtime verification accepts a separately investigated future 0.1.5 target', () => {
   const root = fixture({ source: 'export const ready = true\n', manifest: {
     peerDependencies: {},
     scripts: { build: 'node -e "process.exit(0)"' },
@@ -520,11 +523,11 @@ test('runtime verification accepts a separately investigated future 0.1.2 target
     dsh: { bundle: { patch: './cordis.patch.yml' } },
   } })
   writeFileSync(join(root, 'cordis.patch.yml'), '- insert:\n    - id: fixture-plugin\n      name: fixture-plugin\n')
-  const fakeDsh = join(root, 'fake-dsh-rc2.mjs')
+  const fakeDsh = join(root, 'fake-dsh-rc3.mjs')
   writeFileSync(fakeDsh, `import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 const args = process.argv.slice(2)
-if (args[0] === '--version') process.stdout.write('0.1.2-rc.2\\n')
+if (args[0] === '--version') process.stdout.write('0.1.5-rc.3\\n')
 else if (args[0] === 'plugin') {
   const profile = join(process.env.DSH_HOME, 'profiles', 'web')
   const installed = join(profile, 'node_modules', 'fixture-plugin')
@@ -535,12 +538,12 @@ else if (args[0] === 'plugin') {
 else if (args.includes('--help')) process.stdout.write('fixture help\\n')
 else process.exit(4)
 `)
-  const result = verifyMigration(root, { level: 'runtime', yes: true, install: true, targetVersion: '0.1.2-rc.2', dshCommand: fakeDsh })
+  const result = verifyMigration(root, { level: 'runtime', yes: true, install: true, targetVersion: '0.1.5-rc.3', dshCommand: fakeDsh })
   assert.equal(result.passed, true)
   assert.deepEqual(result.stages.find(item => item.name === 'runtime').dshVersion, {
-    expected: '0.1.2-rc.2',
-    catalog: '0.1.2-rc.1',
-    actual: '0.1.2-rc.2',
+    expected: '0.1.5-rc.3',
+    catalog: '0.1.5-rc.2',
+    actual: '0.1.5-rc.3',
     passed: true,
     command: result.stages.find(item => item.name === 'runtime').dshVersion.command,
   })

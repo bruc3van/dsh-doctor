@@ -1,0 +1,36 @@
+{
+  "platformModules": [
+    "react",
+    "react/jsx-runtime",
+    "react-dom",
+    "react-dom/client",
+    "@deepseek-ai/cordis",
+    "@deepseek-ai/dsh-client-store",
+    "@deepseek-ai/dsh-client-ui-slots",
+    "@deepseek-ai/dsh-client-ui-primitives"
+  ],
+  "profilePatchPaths": {
+    "web": [
+      "packages/bundle/base/cordis.patch.yml",
+      "packages/bundle/web-app/cordis.patch.yml"
+    ]
+  },
+  "rules": [
+    {
+      "id": "client-inject-is-informational",
+      "note": "dsh.client.inject lists package dependency edges; Cordis service inject controls activation."
+    },
+    {
+      "id": "baseline-external-is-implicit",
+      "note": "Platform modules are implicit and must not be repeated in dsh.client.external."
+    },
+    {
+      "id": "feature-values-use-services-or-slots",
+      "note": "Feature plugins must not use dsh.client.external as a feature-to-feature value dependency mechanism."
+    },
+    {
+      "id": "client-export-required",
+      "note": "A web dsh.client declaration requires a published exports[\"./client\"] artifact."
+    }
+  ]
+}

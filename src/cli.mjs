@@ -43,8 +43,8 @@ Options:
   --fix, --repair        legacy confirmed repairs (never removes a plugin)
   --yes                  confirm an explicit write or command
   --from <ref>            source DSH ref (default: dsh-v0.1.1-rc.2)
-  --to <ref>              target DSH ref (default: dsh-v0.1.2-rc.1)
-  --target-version <ver>  actual DSH 0.1.2 version for dependency/runtime checks
+  --to <ref>              target DSH ref (default: dsh-v0.1.5-rc.2)
+  --target-version <ver>  actual DSH 0.1.5 version for dependency/runtime checks
   --safe                  restrict migrate apply to catalog-confirmed exact rewrites
   --plan-file <path>      persist or consume the reviewed migrate apply plan
   --level <level>         static, build, or runtime verification
@@ -86,8 +86,8 @@ const HELP_ZH = `用法：
   --fix, --repair        旧式确认修复（绝不移除插件）
   --yes                  确认一个明确的写入或命令动作
   --from <ref>           源 DSH ref（默认：dsh-v0.1.1-rc.2）
-  --to <ref>             目标 DSH ref（默认：dsh-v0.1.2-rc.1）
-  --target-version <版本> 依赖与 runtime 验证使用的实际 DSH 0.1.2 版本
+  --to <ref>             目标 DSH ref（默认：dsh-v0.1.5-rc.2）
+  --target-version <版本> 依赖与 runtime 验证使用的实际 DSH 0.1.5 版本
   --safe                 migrate apply 仅执行 catalog 确认的精确改写
   --plan-file <路径>     保存或读取已审阅的 migrate apply 计划
   --level <级别>        static、build 或 runtime

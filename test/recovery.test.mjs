@@ -3,10 +3,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { diagnose } from '../src/doctor.mjs'
+import { diagnose as diagnoseRaw } from '../src/doctor.mjs'
 import { checkCompatibleVersion } from '../src/registry.mjs'
 import { applyPersistentQuarantine, attachUpdateResult, persistentQuarantinePlan, prepareRemovalArtifacts, quarantineDocument, restoreBackup, verifyQuarantine, verifyUpdate, writeQuarantineOverlay } from '../src/recovery.mjs'
 import { compareBaseline, createBaseline } from '../src/baseline.mjs'
+
+// Tests describe profile and harness fixtures, not the machine's DSH install,
+// so the CLI availability probe is stubbed as a healthy 0.1.5 executable.
+function diagnose(options = {}) {
+  return diagnoseRaw({ cliProbe: () => ({ runnable: true, version: '0.1.5-rc.2' }), ...options })
+}
 
 function json(file, value) {
   mkdirSync(join(file, '..'), { recursive: true })

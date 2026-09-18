@@ -140,7 +140,10 @@ test('CLI applies a confirmed repair, creates a backup, and re-diagnoses', () =>
   }, null, 2)}\n`)
   writeFileSync(join(plugin, 'cordis.patch.yml'), '[]\n')
 
-  const result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--yes', '--lang=en', '--json'], { encoding: 'utf8' })
+  const result = spawnSync(process.execPath, [cli, '--home', home, '--fix', '--yes', '--lang=en', '--json'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: '', Path: '' },
+  })
   assert.equal(result.status, 0)
   const report = JSON.parse(result.stdout)
   assert.equal(report.ok, true)

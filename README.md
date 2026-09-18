@@ -6,7 +6,7 @@ DSH Doctor 是给 DSH 插件开发者和 Agent 使用的升级、排障工具。
 
 遇到需要理解业务逻辑的改动，它会明确列出来交给 Agent 或开发者处理，不会直接猜。所有修改都会先生成预览并保留备份，运行验证也会放在临时 DSH 环境中，不影响日常使用的 profile。
 
-> 这是社区维护的第三方工具，不属于 DeepSeek 官方项目。当前迁移范围是 DSH 0.1.1 → 0.1.2；catalog 精确覆盖 `dsh-v0.1.1-rc.2` → `dsh-v0.1.2-rc.1`，并保留 alpha.2、alpha.3 历史规则。未收录的版本差异仍需单独调查，不能视为 catalog 已证明兼容。
+> 这是社区维护的第三方工具，不属于 DeepSeek 官方项目。当前迁移范围是 DSH 0.1.1 → 0.1.5；catalog 精确覆盖 `dsh-v0.1.1-rc.2` → `dsh-v0.1.5-rc.2`，并保留 0.1.2 的 alpha.2、alpha.3、rc.1 历史规则。未收录的版本差异仍需单独调查，不能视为 catalog 已证明兼容。
 
 ## 它能解决什么问题
 
@@ -36,21 +36,21 @@ npx skills add bruc3van/dsh-doctor
 安装完成后，在需要迁移的插件仓库中告诉 Agent：
 
 ```text
-请调整并验证当前插件，使其兼容 DSH 0.1.2。
+请调整并验证当前插件，使其兼容 DSH 0.1.5。
 ```
 
 Skill 会引导 Agent：
 
 1. 核实插件、实际 DSH、Harness checkout、包管理器和可用的 DSH Doctor；
 2. 分析源码、依赖、配置、patch 和已有产物；
-3. 确认升级后的同一插件版本是仅支持 0.1.2，还是继续兼容 0.1.1；
+3. 确认升级后的同一插件版本是仅支持 0.1.5，还是继续兼容 0.1.1；
 4. 预览并应用符合兼容策略的精确修改，再处理需要理解业务的语义迁移；
 5. 重新构建，并分别报告静态、产物、隔离运行时和业务行为证据；
 6. 仅在开发者明确要求后，按插件仓库自己的流程提交和发布。
 
 `npx skills add` 只安装 Agent 指令，不会全局安装 DSH Doctor。Skill 会先检查本地 CLI 和 npm registry；本地版本不合适时，默认通过固定版本的 `npm exec` 运行，不会自行修改全局安装。
 
-升级请求本身不代表可以放弃旧版。兼容目标未明确时，Skill 可以先做只读分析，但会在迁移写入、依赖安装、构建或运行时命令前要求确认。双版本模式必须分别验证 0.1.1 和 0.1.2，不能用一次 0.1.2 smoke 代替双版本结论。
+升级请求本身不代表可以放弃旧版。兼容目标未明确时，Skill 可以先做只读分析，但会在迁移写入、依赖安装、构建或运行时命令前要求确认。双版本模式必须分别验证 0.1.1 和 0.1.5，不能用一次 0.1.5 smoke 代替双版本结论。
 
 ## 工作原理
 
@@ -72,9 +72,9 @@ DSH Doctor 由三个相互约束的部分组成：
   → 插件业务行为验证
 ```
 
-DSH 0.1.2 不只是包版本变化。`dsh-client-runtime` 和 `dsh-host-apiproxy` 等旧 owner 被拆分，Session、Workspace、Conversation、pending interaction、Settings 等能力迁移到新的 controller、UI 包或 Service。CLI 只自动修改 catalog 标记为 `exact` 的关系；所有权、生命周期和业务调用变化会作为 `MIG_SEMANTIC_API_CHANGE` 报告。
+从 DSH 0.1.1 迁移到 0.1.5 不只是包版本变化。`dsh-client-runtime` 和 `dsh-host-apiproxy` 等旧 owner 被拆分，Session、Workspace、Conversation、pending interaction、Settings 等能力迁移到新的 controller、UI 包或 Service；0.1.2 到 0.1.5 之间没有再移除任何包，新增的 session-format、sidebar 等包是纯增量能力。CLI 只自动修改 catalog 标记为 `exact` 的关系；所有权、生命周期和业务调用变化会作为 `MIG_SEMANTIC_API_CHANGE` 报告。
 
-如果提供精确 Harness checkout，Doctor 还会确认 catalog 中两个 tag 的 commit，并比较目标 web profile 的 entry id。`--target-version` 可以在完成额外源码调查后绑定更新的 0.1.2 依赖与 runtime 目标，但不会扩大 catalog 的 API 结论。
+如果提供精确 Harness checkout，Doctor 还会确认 catalog 中两个 tag 的 commit，并比较目标 web profile 的 entry id。`--target-version` 可以在完成额外源码调查后绑定更新的 0.1.5 依赖与 runtime 目标，但不会扩大 catalog 的 API 结论。
 
 ## 核心能力
 

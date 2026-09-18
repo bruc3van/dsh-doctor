@@ -3,9 +3,15 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFil
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { defaultDshHome, diagnose, extractStaticRequires, formatReport, resolveDshHome } from '../src/doctor.mjs'
+import { defaultDshHome, diagnose as diagnoseRaw, extractStaticRequires, formatReport, resolveDshHome } from '../src/doctor.mjs'
 import { localizedFinding, resolveLanguage } from '../src/i18n.mjs'
 import { applyRepairs, formatRepairOutcome, formatRepairPlan, repairsFromReport } from '../src/repair.mjs'
+
+// Tests describe profile and harness fixtures, not the machine's DSH install,
+// so the CLI availability probe is stubbed as a healthy 0.1.5 executable.
+function diagnose(options = {}) {
+  return diagnoseRaw({ cliProbe: () => ({ runnable: true, version: '0.1.5-rc.2' }), ...options })
+}
 
 function json(file, value) {
   mkdirSync(join(file, '..'), { recursive: true })
@@ -774,6 +780,7 @@ test('resolves PATH, profile-linked, and explicit DSH CLI installations', () => 
     home: subject.home,
     cwd: subject.root,
     env: { PATH: binDir, PATHEXT: '.CMD' },
+    cliProbe: dshCli => ({ runnable: true, version: dshCli.version }),
   })
   assert.equal(report.context.dshCli.source, 'path')
   assert.deepEqual(report.context.dshCli.command, [pathDsh])
@@ -783,7 +790,12 @@ test('resolves PATH, profile-linked, and explicit DSH CLI installations', () => 
     name: '@deepseek-ai/dsh', version: '2.0.0', bin: { dsh: 'lib/bin.js' },
   })
   text(join(shared, 'lib', 'bin.js'), '#!/usr/bin/env node\n')
-  report = diagnose({ home: subject.home, cwd: subject.root, env: { PATH: '' } })
+  report = diagnose({
+    home: subject.home,
+    cwd: subject.root,
+    env: { PATH: '' },
+    cliProbe: dshCli => ({ runnable: true, version: dshCli.version }),
+  })
   assert.equal(report.context.dshCli.source, 'profile')
   assert.equal(report.context.dshCli.version, '2.0.0')
   assert.deepEqual(report.context.dshCli.command, [process.execPath, join(realpathSync(shared), 'lib', 'bin.js')])
@@ -793,8 +805,45 @@ test('resolves PATH, profile-linked, and explicit DSH CLI installations', () => 
     cwd: subject.root,
     env: { PATH: '' },
     dshCommand: join(shared, 'lib', 'bin.js'),
+    cliProbe: dshCli => ({ runnable: true, version: dshCli.version }),
   })
   assert.equal(report.context.dshCli.source, 'explicit')
+})
+
+test('reports a resolved but non-running DSH CLI as not runnable', () => {
+  const subject = fixture()
+  const broken = join(subject.root, 'broken-bin.js')
+  text(broken, 'process.exit(3)\n')
+  const report = diagnose({
+    home: subject.home,
+    cwd: subject.root,
+    env: { PATH: '' },
+    dshCommand: broken,
+    cliProbe: undefined,
+  })
+  assert.equal(report.context.dshCli.available, false)
+  assert.equal(report.context.dshCli.probeError, 'exit status 3')
+  const probeFinding = report.findings.find(item => item.code === 'DSH_CLI_NOT_RUNNABLE')
+  assert.equal(probeFinding.severity, 'error')
+  assert.match(probeFinding.evidence, /broken-bin\.js: exit status 3/)
+  const localized = localizedFinding(probeFinding, 'zh')
+  assert.match(localized.message, /无法执行/)
+})
+
+test('captures the executed version of a runnable DSH CLI', () => {
+  const subject = fixture()
+  const healthy = join(subject.root, 'healthy-bin.js')
+  text(healthy, "process.stdout.write('9.9.9-rc.1\\n')\n")
+  const report = diagnose({
+    home: subject.home,
+    cwd: subject.root,
+    env: { PATH: '' },
+    dshCommand: healthy,
+    cliProbe: undefined,
+  })
+  assert.equal(report.context.dshCli.available, true)
+  assert.equal(report.context.dshCli.version, '9.9.9-rc.1')
+  assert.equal(report.findings.some(item => item.code === 'DSH_CLI_NOT_RUNNABLE'), false)
 })
 
 test('resolves one validated project-local DSH CLI manifest result', () => {
@@ -806,7 +855,12 @@ test('resolves one validated project-local DSH CLI manifest result', () => {
   })
   text(join(localDsh, 'lib', 'bin.js'), '#!/usr/bin/env node\n')
 
-  const report = diagnose({ home: subject.home, cwd: project, env: { PATH: '' } })
+  const report = diagnose({
+    home: subject.home,
+    cwd: project,
+    env: { PATH: '' },
+    cliProbe: dshCli => ({ runnable: true, version: dshCli.version }),
+  })
   assert.equal(report.context.dshCli.source, 'project')
   assert.equal(report.context.dshCli.version, '3.0.0')
   assert.deepEqual(report.context.dshCli.command, [process.execPath, join(localDsh, 'lib', 'bin.js')])

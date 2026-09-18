@@ -4,7 +4,7 @@
 
 `@deepseek-ai/dsh-client-runtime` was removed without an aggregate replacement.
 
-| Old concern | 0.1.2 owner | Migration policy |
+| Old concern | 0.1.5 owner | Migration policy |
 | --- | --- | --- |
 | store engine and equality helpers | `@deepseek-ai/dsh-client-store` | exact for catalog-listed symbols |
 | Cordis client context type | `@deepseek-ai/cordis` `Context` | exact; preserve local aliases |
@@ -28,6 +28,15 @@ Session snapshots no longer own Conversation views or all pending-interaction fa
 `@deepseek-ai/dsh-tool-subagent-report` was removed: child reporting and parent follow-up were unified into one Steer messaging operation. The runtime surface is `SubagentRuntime.sendMessage` over one adjacent parent/child edge, and the model-facing adapters live in `@deepseek-ai/dsh-tool-subagent-control`. A plugin that bundled or extended the report tool needs a semantic rewrite against that operation; there is no drop-in replacement package.
 
 `@deepseek-ai/dsh-code-runtime-python` was renamed to `@deepseek-ai/dsh-experimental-code-runtime-python` when the package moved to the experimental tier. Update module specifiers and dependency names together, then confirm with the developer that depending on an experimental-tier package is acceptable for the plugin's support posture; do not treat the rename as a silently compatible change.
+
+## Interval 0.1.2-rc.1 to 0.1.5-rc.2
+
+Verified against both refs: no `@deepseek-ai/dsh-*` package was removed or renamed, and the plugin-facing packages the ownership split moves plugins onto are unchanged, so the table above is complete for 0.1.5. Additional facts for plugins migrating past 0.1.2:
+
+- The web profile removed the patch entries `client-runtime`, `api-gateway`, `tool-subagent-report`, and `tool-str-replace-editor` (`api-gateway` the entry is gone even though the `dsh-api-gateway` package survives). A plugin overlay patching one of these ids must re-anchor to the surviving owner entry.
+- `dsh-client-connection` dropped `webServer` from its inject list without export-signature changes; a plugin injecting `webServer` through it must find the new owner itself.
+- 18 new packages (session-format family, client file-upload/resources, client-ui sidebar packages, dockkit, open-in-app, http-proxy, chunked-list, package-manifest, tool-present, api-workspace-files, host-open-in-app) are additive capabilities, not rewrites.
+- 0.1.3 never shipped a stable tag and 0.1.4 was skipped upstream; Cordis stays at 4.0.2.
 
 ## Client graph
 

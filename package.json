@@ -1,7 +1,7 @@
 {
   "name": "@bruc3van/dsh-doctor",
-  "version": "0.5.9",
-  "description": "Help agents diagnose and upgrade DeepSeek Harness plugins from DSH 0.1.1 to 0.1.2",
+  "version": "0.6.0",
+  "description": "Help agents diagnose and upgrade DeepSeek Harness plugins from DSH 0.1.1 to 0.1.5",
   "license": "MIT",
   "type": "module",
   "repository": {

@@ -2,6 +2,27 @@
 
 每个发布版本都必须在这里提供中文说明。GitHub Actions 会根据 tag 提取对应条目，自动创建或更新 GitHub Release；缺少条目或条目不包含中文时，发布流程会失败。
 
+## v0.6.0
+
+### 主要更新
+
+- migration catalog 新增精确目标 `dsh-v0.1.5-rc.2`（对应 npm `@deepseek-ai/dsh` 已发布为 latest/next 的 0.1.5-rc.2）并设为默认值，Skill 的产品范围升级为 DSH 0.1.1 → 0.1.5；同时保留 0.1.2 的 alpha.2、alpha.3、rc.1 三个历史 catalog。
+- 依据两个 tag 的逐项对比确认 0.1.2-rc.1 → 0.1.5-rc.2 区间没有删除或改名任何 `@deepseek-ai/dsh-*` 包，settings、client-store、client-ui、sdk-minimal、webhook 等插件落位包的公共入口零变更，cordis 维持 4.0.2；新增 18 个包（session-format 系列、sidebar、file-upload 等）作为纯增量能力记入 catalog 的 added 列表与 migration-map 区间说明。
+- 记录该区间内 web profile 移除的 4 个 patch entry（`client-runtime`、`api-gateway`、`tool-subagent-report`、`tool-str-replace-editor`）以及 `dsh-client-connection` 内部 inject 列表变化，插件 patch overlay 命中这些 id 时会被分析器按既有 `MIG_PATCH_TARGET_CHANGED` 机制报告。
+- 修复 doctor 的 DSH CLI 可用性误报：解析到命令后现在真实执行一次 `--version` 探测，不可执行时报出新的 `DSH_CLI_NOT_RUNNABLE` 错误并附失败详情，可执行时记录实际运行版本；`dshCli.available` 因此成为真实信号，command 型修复与移除动作不会再信任一个坏 shim。探测支持通过 `cliProbe` 选项注入以便测试。
+- 同步 SKILL.md 版本对与描述、`migrate analyze` 示例、compatibility-strategy、verification、source-investigation、migration-map、中英文 README、package.json 描述与评测样例到 0.1.5-rc.2；新增 0.1.5 catalog、CLI 探测与"未来目标版本"（改用假想的 0.1.5-rc.3）回归测试。
+
+### 安装
+
+```sh
+npm install --global @bruc3van/dsh-doctor@0.6.0
+npx skills add bruc3van/dsh-doctor
+```
+
+### 验证
+
+- 完成 CLI、doctor、migration、runtime、recovery、文档与 Skill 契约测试；对照本地 deepseek-harness checkout 的 `dsh-v0.1.5-rc.2` tag（commit fb2c4b9e）逐项复核包增删、符号迁移、cordis 4.0.2、bundle patch 路径与 web profile entry 扫描（新增 21、移除 4 个条目），并用 npx 安装的真实 `dsh 0.1.5-rc.2` 验证 profile 结构与 `--version`、`--dump-config`、`plugin add` 命令面不变。
+
 ## v0.5.9
 
 ### 主要更新

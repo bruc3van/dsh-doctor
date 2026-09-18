@@ -25,7 +25,7 @@ test('upgrade skill blocks writes until legacy compatibility intent is explicit'
 })
 
 test('dual-version guidance requires evidence for both DSH versions', () => {
-  assert.match(strategy, /The current migration catalog and `migrate verify` target 0\.1\.2/)
+  assert.match(strategy, /The current migration catalog and `migrate verify` target 0\.1\.5/)
   assert.match(strategy, /isolated profile using the actual 0\.1\.1 Harness CLI/)
   assert.match(strategy, /Claim `dual-version` compatibility only after all required matrix rows pass/)
 })
@@ -39,16 +39,16 @@ test('upgrade skill binds reviewed plans, dependency sync, and actual-source inv
   assert.match(sourceInvestigation, /additional-version delta/)
 })
 
-test('upgrade skill separates catalog rules from the actual 0.1.2 verification target', () => {
-  assert.match(skill, /--target-version <actual-0\.1\.2-version>/)
+test('upgrade skill separates catalog rules from the actual 0.1.5 verification target', () => {
+  assert.match(skill, /--target-version <actual-0\.1\.5-version>/)
   assert.match(skill, /the catalog's API claims still end at the declared pair/)
   assert.match(sourceInvestigation, /pass that exact version as `--target-version`/)
 })
 
-test('upgrade skill stays release-line generic while naming rc.1 as the current exact target', () => {
-  assert.match(skill, /Upgrade a DSH 0\.1\.1 plugin to 0\.1\.2/)
+test('upgrade skill stays release-line generic while naming rc.2 as the current exact target', () => {
+  assert.match(skill, /Upgrade a DSH 0\.1\.1 plugin to 0\.1\.5/)
   assert.match(skill, /source ref: `dsh-v0\.1\.1-rc\.2`/)
-  assert.match(skill, /target ref: `dsh-v0\.1\.2-rc\.1`/)
+  assert.match(skill, /target ref: `dsh-v0\.1\.5-rc\.2`/)
   assert.match(skill, /Keep the skill's product scope at the release-line level/)
 })
 

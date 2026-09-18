@@ -1,0 +1,28 @@
+{
+  "services": {
+    "sessions": {
+      "owner": "@deepseek-ai/dsh-api-session-controller/client",
+      "confidence": "semantic",
+      "note": "The service name survives, but Session snapshots no longer contain Conversation views or pending interactions."
+    },
+    "workspaces": {
+      "owner": "@deepseek-ai/dsh-api-workspace-controller/client",
+      "confidence": "semantic",
+      "note": "The service name survives, while cross-domain navigation belongs to ui-workspace."
+    },
+    "conversation": {
+      "owner": "@deepseek-ai/dsh-client-ui-conversation/client",
+      "confidence": "semantic",
+      "note": "Conversation assembly and input are independent of Session lifecycle snapshots."
+    },
+    "slots": {
+      "owner": "@deepseek-ai/dsh-client-ui-renderer/client",
+      "confidence": "semantic",
+      "note": "Slot declarations stay in ui-slots; runtime registration and binding belong to ui-renderer."
+    }
+  },
+  "removedHostFacade": {
+    "package": "@deepseek-ai/dsh-host-apiproxy",
+    "replacementPolicy": "Use the natural business Remote owner through generated api-remotes contributions; there is no replacement facade."
+  }
+}
